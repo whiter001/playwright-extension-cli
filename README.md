@@ -1,20 +1,17 @@
 # playwright-mcp-cli
 
-把 MCP client 接到**已安装的 Playwright Chrome Extension** 上，复用扩展的登录态 / 会话 / 标签页。
+用**命令行**驱动你日常用的浏览器 —— 通过已安装的 **Playwright Chrome Extension**，
+复用扩展的登录态 / 会话 / 标签页。
 
-和 `npx @playwright/mcp@latest --extension` 的区别：**桥接层（relay）由本项目自己实现**，
-MCP 工具层直接复用上游 `playwright-core` 的 bundle —— 所以工具名、aria ref 快照格式、
-行为与官方完全一致，但连接过程、profile 探测、CLI 参数由你自己掌控。
+底层动作复用上游 `playwright-core` 的 MCP 工具层，所以快照格式（`[ref=e12]`）、
+点击语义、等待策略与官方 `playwright-mcp` 完全一致；**桥接层（relay）和会话管理由本项目自己实现**。
 
 ```
-MCP client ──stdio(JSON-RPC)──▶ playwright-mcp-cli
-                                    │
-                                    ├─ relay: WebSocket server (127.0.0.1)
-                                    │    ├─ /cdp/<uuid>       ← Playwright CDP client
-                                    │    └─ /extension/<uuid> ← Chrome Extension
-                                    │
-                                    └─ tools: playwright-core/lib/coreBundle
-                                              (browser_snapshot / browser_click / ...)
+pwcli navigate https://example.com
+pwcli snapshot
+pwcli click e13
+pwcli type e4 "hello"
+pwcli screenshot shot.png
 ```
 
 ## 快速开始
@@ -23,86 +20,107 @@ MCP client ──stdio(JSON-RPC)──▶ playwright-mcp-cli
 npm install
 npm run build
 
-# 自检：浏览器、profile、扩展是否就位
-node dist/cli.js doctor
+node dist/cli.js doctor      # 自检：浏览器 / profile / 扩展
+node dist/cli.js connect     # 打开扩展连接页，在 Chrome 里选一个标签页
+node dist/cli.js navigate https://example.com
 ```
 
-接入 MCP client：
+`connect` 之后会话由一个**常驻 daemon** 持有，所以后续每条命令都是毫秒级响应，
+不用反复授权。
 
-```json
-{
-  "mcpServers": {
-    "playwright-extension": {
-      "command": "node",
-      "args": ["/path/to/playwright-mcp-cli/dist/cli.js"]
-    }
-  }
-}
-```
+## 命令
 
-首次调用时，CLI 会在 Chrome 里打开扩展的连接页（`chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/connect.html`），
-选一个标签页即可授权。
+### 会话
 
-## 命令行参数
+| 命令 | 说明 |
+| --- | --- |
+| `connect` | 启动会话（打开扩展连接页，等你在 Chrome 里授权） |
+| `disconnect` | 结束会话，关闭 daemon |
+| `status` | 查看会话状态（pid / 扩展是否连上 / 当前页面） |
+| `tools` | 列出可用的浏览器工具 |
+| `doctor` | 检查浏览器 / profile / 扩展安装情况 |
+| `mcp` | 以 MCP server（stdio）方式暴露同一套工具 |
 
-| 参数 | 说明 | 环境变量 |
-| --- | --- | --- |
-| `--browser <channel>` | 浏览器渠道：`chrome` / `msedge` / `chromium` / `chrome-beta` … | `PLAYWRIGHT_MCP_BROWSER` |
-| `--executable-path <path>` | 显式指定浏览器可执行文件 | `PLAYWRIGHT_MCP_EXECUTABLE_PATH` |
-| `--user-data-dir <path>` | 自定义浏览器 User Data 目录 | — |
-| `--profile-dir-name <name>` | Chrome profile 目录名，如 `Default` / `Profile 1` | `PLAYWRIGHT_MCP_PROFILE_DIR_NAME` |
-| `--token <token>` | 扩展认证 token，跳过授权对话框 | `PLAYWRIGHT_MCP_EXTENSION_TOKEN` |
-| `--client-name <name>` | 扩展 UI / 标签组里显示的名字，默认 `playwright-mcp-cli` | — |
-| `--caps <a,b,c>` | 额外能力（`network,pdf,vision`…），`core` 恒开 | — |
-| `--output-dir <path>` | 自动命名输出文件（截图 / PDF）的目录 | — |
-| `--timeout <ms>` | 等待扩展连接的时长，`0` = 一直等（默认） | — |
-| `--log-level <level>` | `error` / `warn` / `info` / `debug` | `PW_MCP_CLI_LOG` |
+### 浏览器
 
-`playwright-mcp-cli doctor` 会打印：浏览器可执行文件、User Data 目录、装了扩展的 profile、以及扩展是否真的装在那个 profile 里。
+| 命令 | 说明 |
+| --- | --- |
+| `navigate <url>` | 打开网址 |
+| `back` / `reload` | 后退 / 刷新 |
+| `snapshot [--target <ref>] [--depth <n>] [--boxes]` | 打印无障碍快照（含 `[ref=eN]`） |
+| `click <target> [--double] [--button <left\|right\|middle>]` | 点击元素（ref 或 CSS 选择器） |
+| `hover <target>` | 悬停 |
+| `type <target> <text> [--submit] [--slowly]` | 输入文本 |
+| `fill <target=value> [...]` | 一次填多个字段 |
+| `press <key>` | 按键（Enter / ArrowLeft / a …） |
+| `select <target> <value>` | 下拉选择 |
+| `drag <start> <end>` | 拖拽 |
+| `screenshot [path] [--full] [--target <ref>] [--scale <css\|device>]` | 截图 |
+| `pdf [path]` | 导出 PDF |
+| `eval <function>` | 在页面里执行函数，如 `eval "() => document.title"` |
+| `run <file.js>` | 执行 Playwright 片段：`async (page) => { ... }` |
+| `console [--level <level>] [--all]` | 控制台输出 |
+| `network [--filter <regexp>] [--static]` | 网络请求列表 |
+| `request <index> [--part <part>]` | 单个请求的细节 |
+| `find <text> [--regex <re>]` | 在快照里找文本 |
+| `wait [--time <s>] [--text <t>] [--text-gone <t>]` | 等待 |
+| `tabs [list\|new <url>\|select <i>\|close <i>]` | 标签页管理 |
+| `resize <w> <h>` | 调整窗口大小 |
+| `upload <path> [...]` | 上传文件 |
+| `dialog <accept\|reject> [--text <t>]` | 处理弹窗 |
+| `emulate [--color-scheme <light\|dark>] [--reduced-motion <reduce\|no-preference>]` | 媒体特性模拟 |
+| `cookies [list\|get <n>\|set <n>=<v>\|delete <n>\|clear]` | Cookie 操作 |
+| `close` | 关闭当前页面 |
 
-> **注意**：带 `--token` 时扩展会跳过「选择标签页」界面，直接连接**连接页自身**
-> （这是扩展 0.4.0 的既定行为）。要操作真实网页，请**不要**传 token，在连接页里手动选标签页。
+`<target>` 可以是快照里的 `ref`（如 `e12`），也可以是 CSS 选择器。
+
+### 全局选项
+
+| 选项 | 说明 |
+| --- | --- |
+| `--json` | 输出原始工具结果（JSON），便于脚本处理 |
+| `--browser <channel>` | `chrome` / `msedge` / `chromium` / …（默认 chrome） |
+| `--executable-path <path>` | 指定浏览器可执行文件 |
+| `--user-data-dir <path>` | 自定义 User Data 目录 |
+| `--profile-dir-name <name>` | Chrome profile 目录名，如 `Default` / `Profile 1` |
+| `--token <token>` | 扩展认证 token；`--token ""` 可忽略环境变量 |
+| `--client-name <name>` | 扩展 UI / 标签组里显示的名字 |
+| `--output-dir <path>` | 截图 / PDF 等自动命名文件的输出目录 |
+| `--timeout <ms>` | 等待扩展连接的超时 |
+| `--log-level <level>` | `error` / `warn` / `info` / `debug` |
 
 ## 工作原理
+
+```
+pwcli <command>
+   │  unix socket
+   ▼
+daemon ── relay (WebSocket, 127.0.0.1)
+             ├─ /extension/<uuid> ← Chrome Extension（主动连回）
+             └─ /cdp/<uuid>      ← playwright.chromium.connectOverCDP
+   │
+   └─ 工具层：playwright-core/lib/coreBundle（上游 MCP 工具实现）
+```
 
 1. **找 profile**：读 `<User Data>/Local State` 的 `profile.last_used`，
    依次检查 `Default` / `Profile N` 下是否存在 `Extensions/mmlmfjhmonkocbjadbfplnigmagldckm`
    或 `Preferences` 里的扩展记录。
-2. **起 relay**：在 `127.0.0.1` 上开一个 WebSocket server，两条路径各带一个随机 UUID
+2. **起 relay**：在 `127.0.0.1` 上开一个 WebSocket server，两条路径各带随机 UUID
    （防止本机其它进程连上）。扩展强制要求 relay 必须是 loopback 地址。
 3. **开连接页**：`spawn` 浏览器打开
-   `chrome-extension://<id>/connect.html?mcpRelayUrl=ws://…&client=…&protocolVersion=2[&token=…]`。
-   扩展用 `localStorage` 里的 `auth-token` 比对 token，然后**主动连回** relay。
-4. **协议 v2**：扩展连上后先推 `chrome.tabs.onCreated`（每个标签页），最后推
-   `extension.initialized`。relay 在这之前不处理 CDP 命令，
-   保证 `Target.setAutoAttach` 拿到的是完整 tab 模型。
+   `chrome-extension://<id>/connect.html?mcpRelayUrl=ws://…&client=…&protocolVersion=2[&token=…]`，
+   扩展用 `localStorage` 里的 `auth-token` 比对 token 后**主动连回** relay。
+4. **协议 v2**：扩展先推 `chrome.tabs.onCreated`（每个标签页），最后推 `extension.initialized`。
+   relay 在这之前不处理 CDP 命令，保证 `Target.setAutoAttach` 拿到的是完整 tab 模型。
 5. **CDP over relay**：`chromium.connectOverCDP(relay.cdpEndpoint(), { isLocal: true, timeout: 0, noDefaults: true })`。
    `noDefaults` 很关键 —— 不能去改用户日常浏览器的 acceptDownloads / 媒体模拟等默认值。
-6. **工具层**：`tools.createConnection(config, contextGetter)` 把 relay 拿到的
-   `BrowserContext` 注入上游 MCP server，工具集与官方 `playwright-mcp` 完全一致。
+6. **工具层**：`tools.createConnection(config, contextGetter)` 把 relay 拿到的 `BrowserContext`
+   注入上游 MCP server；daemon 通过内存 transport 调用它，命令与 agent 走的是同一套实现。
+
+**为什么需要 daemon**：扩展的 WebSocket 断了连接就没了 —— CLI 单次执行退出的话，
+每次命令都要重新授权。所以连接常驻 daemon，命令通过 unix socket 走。
 
 协议细节（命令 / 事件 / 消息帧）见 `src/relay/protocol.ts`。
-
-## 代码结构
-
-```
-src/
-  cli.ts              参数解析、doctor 子命令、信号处理
-  server.ts           relay → connectOverCDP → createConnection 串联
-  log.ts              stderr logger（stdout 留给 MCP）
-  relay/
-    protocol.ts       协议 v2 的类型定义
-    browserModel.ts   chrome tab id ↔ CDP sessionId 映射、事件翻译
-    relayV2.ts        chrome.* 方言 ↔ CDP 方言适配层
-    cdpRelay.ts       WebSocket relay server
-    wsServer.ts       带路径路由的最小 WS server
-    chrome.ts         浏览器发现、profile 探测、连接页唤起
-scripts/
-  relay-test.mjs        离线 relay 测试（假扩展）
-  manual-path-test.mjs  真扩展全链路测试
-  setup-test-chrome.sh  准备隔离的测试 Chrome
-  e2e.mjs               对着日常 Chrome 的端到端冒烟测试
-```
 
 ## 开发与测试
 
@@ -113,21 +131,23 @@ npm run build
 # 1) 离线 relay 测试（假扩展 + 裸 CDP 客户端，不需要 Chrome）
 npm test
 
-# 2) 手动选标签页的全链路测试（真扩展 + 隔离 Chrome 实例，无需人工点击）
+# 2) 手动选标签页的全链路测试（真扩展 + 隔离 Chrome，CDP 自动点授权）
 npm run test:chrome      # 准备 /tmp/pw-test-profile 的 Chrome
 npm run test:manual
 
-# 3) 对着你自己日常用的 Chrome 跑（会在 Chrome 里打开连接页，需要点一下）
+# 3) CLI 本身的端到端测试（真跑 pwcli 子命令）
+npm run test:cli
+
+# 4) 对着你日常用的 Chrome 跑 MCP server（需要在 Chrome 里点一下）
 node scripts/e2e.mjs
-node scripts/e2e.mjs --token <token>   # 全自动
 ```
 
 `scripts/relay-test.mjs` 用一个假扩展实现协议 v2，断言 relay 的握手时序、
 tab ↔ session 映射、命令路由与错误传播。
 
-`scripts/manual-path-test.mjs` 会用 CDP 打开扩展的连接页并自己点掉
-「Allow & select」，然后断言：扩展连回 relay、relay 挂上被选中的标签页、
-上游 MCP 工具层能对真实页面跑出带 aria ref 的 `browser_snapshot`。
+`scripts/manual-path-test.mjs` 与 `scripts/cli-test.mjs` 会用 CDP 打开扩展的连接页
+并自己点掉「Allow & select」，然后断言扩展连回 relay、挂上被选中的真实标签页、
+上游工具层能跑出带 aria ref 的 `browser_snapshot`，以及 CLI 各子命令的行为。
 
 ## 致谢与许可
 

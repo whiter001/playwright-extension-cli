@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "bin": {
+    "pwcli": "./dist/cli.js",
     "playwright-mcp-cli": "./dist/cli.js"
   },
   "main": "./dist/cli.js",
@@ -21,6 +22,7 @@
     "clean": "rm -rf dist",
     "test": "npm run build && node scripts/relay-test.mjs",
     "test:manual": "npm run build && node scripts/manual-path-test.mjs",
+    "test:cli": "npm run build && node scripts/cli-test.mjs",
     "test:chrome": "scripts/setup-test-chrome.sh",
     "e2e": "node scripts/e2e.mjs"
   },

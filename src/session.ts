@@ -1,20 +1,5 @@
 /**
- * Copyright (c) Microsoft Corporation.
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-/**
- * Glue between the CDP relay and the MCP server.
+ * Glue between the CDP relay, the upstream MCP tool layer and the CLI.
  *
  * The MCP tool layer is *not* re-implemented here: we reuse the very same
  * bundle that `@playwright/mcp` uses (`playwright-core/lib/coreBundle`),
@@ -22,6 +7,8 @@
  * the upstream aria-ref snapshot format.
  */
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { chromium } from 'playwright-core';
 
@@ -150,14 +137,36 @@ export async function connectToExtension(options: ExtensionServerOptions = {}): 
   }
 }
 
+/**
+ * Wires the upstream MCP tool layer to an already connected browser context
+ * and returns a client that can call the tools.
+ */
+export async function createToolClient(
+  context: BrowserContext,
+  options: ExtensionServerOptions = {},
+): Promise<Client> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = await tools.createConnection({
+    // Tells the config resolver to keep the attached (non-isolated) context.
+    extension: true,
+    capabilities: options.capabilities,
+    outputDir: options.outputDir,
+    browser: { isolated: false },
+  }, async () => context);
+  await server.connect(serverTransport);
+
+  const client = new Client({ name: options.clientName ?? 'playwright-mcp-cli', version: '1.0.0' }, { capabilities: {} });
+  await client.connect(clientTransport);
+  return client;
+}
+
 export type RunningServer = {
   /** Resolves once the extension is attached and the browser is usable. */
   session: Promise<ExtensionSession>;
 };
 
 /**
- * Connects to the extension and serves the upstream Playwright MCP tool set
- * over stdio.
+ * Serves the upstream Playwright MCP tool set over stdio.
  *
  * The extension handshake starts in the background so that the MCP transport
  * is up immediately; the first tool call waits for the extension to attach.
@@ -167,7 +176,6 @@ export async function startStdioServer(options: ExtensionServerOptions = {}): Pr
   session.catch(error => log.error('Extension connection failed:', error));
 
   const config = {
-    // Tells the config resolver to keep the attached (non-isolated) context.
     extension: true,
     capabilities: options.capabilities,
     outputDir: options.outputDir,

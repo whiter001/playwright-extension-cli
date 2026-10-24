@@ -15,7 +15,7 @@ const passthrough = process.argv.slice(2);
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: ['dist/cli.js', ...passthrough],
+  args: ['dist/cli.js', 'mcp', ...passthrough],
   cwd: process.cwd(),
   stderr: 'inherit',
   env: { ...process.env },

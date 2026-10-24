@@ -17,6 +17,9 @@
 import fs from 'fs';
 import path from 'path';
 
+import { daemonStatus, sendRequest } from './client';
+import { commands, findCommand, parseArgv, UsageError } from './commands';
+import { daemonLogPath, DEFAULT_CAPABILITIES, runDaemon } from './daemon';
 import { log, setLogLevel } from './log';
 import {
   defaultUserDataDirForChannel,
@@ -26,141 +29,168 @@ import {
   playwrightExtensionId,
   playwrightExtensionInstallUrl,
 } from './relay/chrome';
-import { startStdioServer } from './server';
+import { startStdioServer } from './session';
 
 import type { LogLevel } from './log';
+import type { ExtensionServerOptions } from './session';
 
-type Options = {
-  browserChannel?: string;
+const SESSION_VALUE_FLAGS = new Set([
+  'browser',
+  'executable-path',
+  'user-data-dir',
+  'profile-dir-name',
+  'token',
+  'client-name',
+  'output-dir',
+  'timeout',
+  'log-level',
+]);
+
+type SessionFlags = {
+  browser?: string;
   executablePath?: string;
   userDataDir?: string;
   profileDirName?: string;
   token?: string;
   clientName?: string;
-  capabilities?: string[];
   outputDir?: string;
   connectTimeoutMs?: number;
   logLevel?: LogLevel;
+  json: boolean;
 };
 
-const USAGE = `
-playwright-mcp-cli — bridge an MCP client to the Playwright Chrome Extension
-
-Usage:
-  playwright-mcp-cli [options]            Serve MCP over stdio (default)
-  playwright-mcp-cli doctor [options]     Print extension/browser diagnostics
-
-Options:
-  --browser <channel>         Browser channel: chrome | msedge | chromium | chrome-beta | ...
-                              (env PLAYWRIGHT_MCP_BROWSER, default: chrome)
-  --executable-path <path>    Explicit browser executable
-                              (env PLAYWRIGHT_MCP_EXECUTABLE_PATH)
-  --user-data-dir <path>      Custom browser "User Data" directory
-  --profile-dir-name <name>   Chrome profile directory, e.g. "Default" or "Profile 1"
-                              (env PLAYWRIGHT_MCP_PROFILE_DIR_NAME)
-  --token <token>             Extension auth token; skips the approval dialog.
-                              Pass "" to ignore PLAYWRIGHT_MCP_EXTENSION_TOKEN
-                              (env PLAYWRIGHT_MCP_EXTENSION_TOKEN)
-  --client-name <name>        Name shown in the extension UI and tab group
-                              (default: playwright-mcp-cli)
-  --caps <a,b,c>              Extra tool capabilities, e.g. "network,pdf,vision"
-                              (the "core" set is always enabled)
-  --output-dir <path>         Directory for automatically named output files
-  --timeout <ms>              How long to wait for the extension to connect
-                              (0 = forever, default: 0)
-  --log-level <level>         error | warn | info | debug (env PW_MCP_CLI_LOG)
-  --version                   Print the version and exit
-  -h, --help                  Show this help
-`;
-
-function parseArgs(argv: string[]): { command: 'serve' | 'doctor'; options: Options } {
-  const options: Options = {};
-  let command: 'serve' | 'doctor' = 'serve';
-
-  const takeValue = (index: number, name: string): string => {
-    const value = argv[index + 1];
-    if (value === undefined)
-      throw new Error(`Missing value for ${name}`);
-    argv.splice(index + 1, 1);
-    return value;
-  };
+/**
+ * Splits the argv into session-level flags (consumed here and forwarded to
+ * the daemon) and the rest, which belongs to the command.
+ */
+function splitSessionFlags(argv: string[]): { session: SessionFlags; rest: string[] } {
+  const session: SessionFlags = { json: false };
+  const rest: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (!arg.startsWith('--')) {
+      rest.push(arg);
+      continue;
+    }
     const eq = arg.indexOf('=');
-    const [name, inlineValue] = arg.startsWith('--') && eq !== -1
-      ? [arg.slice(0, eq), arg.slice(eq + 1)]
-      : [arg, undefined];
-    const value = () => inlineValue ?? takeValue(i, name);
+    const name = eq !== -1 ? arg.slice(2, eq) : arg.slice(2);
+    let value: string | undefined = eq !== -1 ? arg.slice(eq + 1) : undefined;
 
+    if (name === 'json') {
+      session.json = true;
+      continue;
+    }
+    if (!SESSION_VALUE_FLAGS.has(name)) {
+      rest.push(arg);
+      continue;
+    }
+    if (value === undefined) {
+      value = argv[++i];
+      if (value === undefined)
+        throw new UsageError(`Missing value for --${name}`);
+    }
     switch (name) {
-      case '--browser':
-        options.browserChannel = value();
-        break;
-      case '--executable-path':
-        options.executablePath = value();
-        break;
-      case '--user-data-dir':
-        options.userDataDir = value();
-        break;
-      case '--profile-dir-name':
-        options.profileDirName = value();
-        break;
-      case '--token':
-        options.token = value();
-        break;
-      case '--client-name':
-        options.clientName = value();
-        break;
-      case '--caps':
-        options.capabilities = value().split(',').map(c => c.trim()).filter(Boolean);
-        break;
-      case '--output-dir':
-        options.outputDir = value();
-        break;
-      case '--timeout':
-        options.connectTimeoutMs = Number(value());
-        break;
-      case '--log-level':
-        options.logLevel = value() as LogLevel;
-        break;
-      case 'doctor':
-        command = 'doctor';
-        break;
-      default:
-        if (name === '-h' || name === '--help') {
-          process.stdout.write(USAGE);
-          process.exit(0);
-        }
-        if (name === '--version') {
-          const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
-          process.stdout.write(`${pkg.version}\n`);
-          process.exit(0);
-        }
-        throw new Error(`Unknown argument: ${arg}`);
+      case 'browser': session.browser = value; break;
+      case 'executable-path': session.executablePath = value; break;
+      case 'user-data-dir': session.userDataDir = value; break;
+      case 'profile-dir-name': session.profileDirName = value; break;
+      case 'token': session.token = value; break;
+      case 'client-name': session.clientName = value; break;
+      case 'output-dir': session.outputDir = value; break;
+      case 'timeout': session.connectTimeoutMs = Number(value); break;
+      case 'log-level': session.logLevel = value as LogLevel; break;
     }
   }
-  return { command, options };
+
+  return { session, rest };
 }
 
-function applyEnv(options: Options): Options {
+function sessionOptions(session: SessionFlags): ExtensionServerOptions {
   return {
-    ...options,
-    browserChannel: options.browserChannel ?? process.env.PLAYWRIGHT_MCP_BROWSER ?? 'chrome',
-    executablePath: options.executablePath ?? process.env.PLAYWRIGHT_MCP_EXECUTABLE_PATH,
-    profileDirName: options.profileDirName ?? process.env.PLAYWRIGHT_MCP_PROFILE_DIR_NAME,
+    browserChannel: session.browser ?? process.env.PLAYWRIGHT_MCP_BROWSER ?? 'chrome',
+    executablePath: session.executablePath ?? process.env.PLAYWRIGHT_MCP_EXECUTABLE_PATH,
+    profileDirName: session.profileDirName ?? process.env.PLAYWRIGHT_MCP_PROFILE_DIR_NAME,
+    userDataDir: session.userDataDir,
     // An explicit empty token means "no token": it disables the env fallback
     // so a stale PLAYWRIGHT_MCP_EXTENSION_TOKEN cannot break the manual
     // approval flow.
-    token: options.token !== undefined
-      ? options.token
-      : process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN,
-    logLevel: options.logLevel ?? (process.env.PW_MCP_CLI_LOG as LogLevel | undefined),
+    token: session.token !== undefined ? session.token : process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN,
+    clientName: session.clientName ?? 'playwright-mcp-cli',
+    outputDir: session.outputDir,
+    connectTimeoutMs: session.connectTimeoutMs,
+    capabilities: DEFAULT_CAPABILITIES,
   };
 }
 
-async function doctor(options: Options): Promise<void> {
-  const channel = options.browserChannel ?? 'chrome';
+/** Flags the daemon needs in order to reproduce this session. */
+function daemonArgs(session: SessionFlags): string[] {
+  const args: string[] = [];
+  const options = sessionOptions(session);
+  if (options.browserChannel) args.push('--browser', options.browserChannel);
+  if (options.executablePath) args.push('--executable-path', options.executablePath);
+  if (options.userDataDir) args.push('--user-data-dir', options.userDataDir);
+  if (options.profileDirName) args.push('--profile-dir-name', options.profileDirName);
+  if (options.token !== undefined) args.push('--token', options.token);
+  if (options.clientName) args.push('--client-name', options.clientName);
+  if (options.outputDir) args.push('--output-dir', options.outputDir);
+  if (options.connectTimeoutMs !== undefined) args.push('--timeout', String(options.connectTimeoutMs));
+  return args;
+}
+
+function printResult(result: any, json: boolean): void {
+  if (json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+  const parts = (result?.content ?? []).filter((part: any) => part.type === 'text');
+  if (!parts.length) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+  process.stdout.write(parts.map((part: any) => part.text).join('\n') + '\n');
+}
+
+function usage(): string {
+  const lines = [
+    'playwright-mcp-cli — drive your browser through the Playwright Chrome Extension',
+    '',
+    'Usage:',
+    '  pwcli <command> [args] [options]',
+    '',
+    'Session commands:',
+    '  connect                 Start the session (opens the extension connect page in Chrome)',
+    '  disconnect              Tear the session down',
+    '  status                  Show session state',
+    '  tools                   List the available browser tools',
+    '  doctor                  Check browser / profile / extension setup',
+    '  mcp                     Serve the same tools as an MCP server over stdio',
+    '',
+    'Commands:',
+  ];
+  for (const command of commands)
+    lines.push(`  ${command.usage.padEnd(58)} ${command.summary}`);
+  lines.push(
+    '',
+    'Global options:',
+    '  --json                        Print the raw tool result as JSON',
+    '  --browser <channel>           chrome | msedge | chromium | ...',
+    '  --executable-path <path>      Explicit browser executable',
+    '  --user-data-dir <path>        Custom browser "User Data" directory',
+    '  --profile-dir-name <name>     Chrome profile directory, e.g. "Default"',
+    '  --token <token>               Extension token; "" ignores the env var',
+    '  --client-name <name>          Name shown in the extension UI',
+    '  --output-dir <path>           Directory for generated files',
+    '  --timeout <ms>                How long to wait for the extension',
+    '  --log-level <level>           error | warn | info | debug',
+    '  -h, --help                    Show this help',
+  );
+  return lines.join('\n');
+}
+
+async function doctor(session: SessionFlags): Promise<void> {
+  const options = sessionOptions(session);
+  const channel = options.browserChannel!;
   const executablePath = options.executablePath ?? findBrowserExecutable(channel);
   const userDataDir = options.userDataDir ?? defaultUserDataDirForChannel(channel);
 
@@ -188,33 +218,129 @@ async function doctor(options: Options): Promise<void> {
     }
   }
 
-  // stdout is free here: the doctor command does not speak MCP.
   process.stdout.write(lines.join('\n') + '\n');
 }
 
-async function main(): Promise<void> {
-  const { command, options: parsed } = parseArgs(process.argv.slice(2));
-  const options = applyEnv(parsed);
-  if (options.logLevel)
-    setLogLevel(options.logLevel);
+async function listTools(): Promise<void> {
+  const { tools } = require('playwright-core/lib/coreBundle');
+  const list = tools.filteredTools({ capabilities: DEFAULT_CAPABILITIES });
+  for (const tool of list)
+    process.stdout.write(`${tool.schema.name.padEnd(34)} ${tool.capability}\n`);
+}
 
-  if (command === 'doctor') {
-    await doctor(options);
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const { session, rest } = splitSessionFlags(argv);
+
+  if (session.logLevel)
+    setLogLevel(session.logLevel);
+
+  const commandName = rest[0];
+  if (!commandName || commandName === '-h' || commandName === '--help' || commandName === 'help') {
+    process.stdout.write(usage() + '\n');
+    return;
+  }
+  if (commandName === '--version' || commandName === 'version') {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+    process.stdout.write(`${pkg.version}\n`);
     return;
   }
 
-  const { session } = await startStdioServer(options);
+  switch (commandName) {
+    case 'daemon': {
+      await runDaemon(sessionOptions(session));
+      return;
+    }
+    case 'doctor': {
+      await doctor(session);
+      return;
+    }
+    case 'tools': {
+      await listTools();
+      return;
+    }
+    case 'mcp': {
+      const { session: running } = await startStdioServer(sessionOptions(session));
+      const shutdown = async () => {
+        const connected = await running.catch(() => undefined);
+        await connected?.close().catch(() => {});
+        process.exit(0);
+      };
+      process.on('SIGINT', () => void shutdown());
+      process.on('SIGTERM', () => void shutdown());
+      return;
+    }
+    case 'status': {
+      const status = await daemonStatus();
+      if (session.json) {
+        process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+        return;
+      }
+      if (!status.running) {
+        process.stdout.write('running:   no session (start one with `pwcli connect`)\n');
+        return;
+      }
+      process.stdout.write([
+        `running:   yes`,
+        `pid:       ${status.pid ?? '-'}`,
+        `started:   ${status.startedAt ?? '-'}`,
+        `extension: ${status.connected ? 'connected' : 'waiting for approval in Chrome'}`,
+        ...(status.pages?.length ? [`pages:     ${status.pages.join(', ')}`] : []),
+        `log:       ${daemonLogPath()}`,
+      ].join('\n') + '\n');
+      return;
+    }
+    case 'connect': {
+      process.stderr.write('Starting the session; approve the extension connection in Chrome...\n');
+      const deadline = Date.now() + (session.connectTimeoutMs ?? 120_000);
+      let status = await sendRequest({ type: 'status' }, { daemonArgs: daemonArgs(session) });
+      while (!status.connected && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        status = await sendRequest({ type: 'status' }, { daemonArgs: daemonArgs(session) });
+      }
+      if (!status.connected) {
+        process.stderr.write('Timed out waiting for the extension to be approved.\n');
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write('connected\n');
+      return;
+    }
+    case 'disconnect': {
+      await sendRequest({ type: 'disconnect' }, { daemonArgs: daemonArgs(session) });
+      process.stdout.write('disconnected\n');
+      return;
+    }
+  }
 
-  const shutdown = async () => {
-    const connected = await session.catch(() => undefined);
-    await connected?.close().catch(() => {});
-    process.exit(0);
-  };
-  process.on('SIGINT', () => void shutdown());
-  process.on('SIGTERM', () => void shutdown());
+  const command = findCommand(commandName);
+  if (!command) {
+    process.stderr.write(`Unknown command: ${commandName}\n\n`);
+    process.stderr.write(usage() + '\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const { positional, flags } = parseArgv(rest.slice(1), command.valueFlags ?? []);
+  const call = command.build(positional, flags);
+
+  const result = await sendRequest({
+    type: 'tool',
+    tool: call.tool,
+    arguments: call.arguments,
+    cwd: process.cwd(),
+  }, { daemonArgs: daemonArgs(session) });
+
+  printResult(result, session.json);
+  if (result?.isError)
+    process.exitCode = 1;
 }
 
 main().catch(error => {
+  if (error instanceof UsageError) {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(1);
+  }
   log.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
   process.exit(1);
 });
