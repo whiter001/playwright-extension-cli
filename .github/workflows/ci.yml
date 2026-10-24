@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `npm test` builds and then runs the argument-mapping test and the
+      # relay test. Both are browserless — the browser-dependent suites
+      # (test:manual, test:cli) need a real Chrome with the Playwright
+      # Extension installed and stay local.
+      - name: Test
+        run: npm test

@@ -168,6 +168,12 @@ tab ↔ session 映射、命令路由与错误传播。
 并自己点掉「Allow & select」，然后断言扩展连回 relay、挂上被选中的真实标签页、
 上游工具层能跑出带 aria ref 的 `browser_snapshot`，以及 CLI 各子命令的行为。
 
+CI（`.github/workflows/ci.yml`）在 push / PR 上跑 `typecheck` + `npm test`——
+这两个套件都不需要浏览器。需要真实 Chrome 的 `test:manual` / `test:cli` 留在本地跑。
+
+`npm run build` 会先 `clean` 再编译：`tsc` 不会删除已删除源文件留下的旧产物，
+不清理的话 `dist/` 里会一直躺着过期的 `.js`，而 `files: ["dist"]` 会把它们一起发布出去。
+
 ## 致谢与许可
 
 - 工具层、协议与 relay 实现移植自 [microsoft/playwright](https://github.com/microsoft/playwright)
