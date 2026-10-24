@@ -93,51 +93,67 @@ export async function ensureDaemon(options: SendOptions = {}): Promise<net.Socke
   throw new Error(`The daemon did not start in time. See ${daemonLogPath()}`);
 }
 
-export async function sendRequest(
-  request: Omit<DaemonRequest, 'id'>,
-  options: SendOptions = {},
-): Promise<any> {
-  const socket = await ensureDaemon(options);
+/**
+ * Sends one newline-delimited request and waits for the newline-delimited
+ * response.
+ *
+ * Every way the connection can end must settle the promise: a daemon that is
+ * killed closes the socket with a normal FIN, which emits `close` but no
+ * `error` — without a `close` handler the CLI would hang forever.
+ */
+function roundTrip(socket: net.Socket, payload: object): Promise<any> {
   return new Promise((resolve, reject) => {
     let buffer = '';
+    let settled = false;
+
+    const settle = (action: () => void) => {
+      if (settled)
+        return;
+      settled = true;
+      action();
+    };
+
     socket.setEncoding('utf8');
     socket.on('data', chunk => {
       buffer += chunk;
       const index = buffer.indexOf('\n');
       if (index === -1)
         return;
-      const response = JSON.parse(buffer.slice(0, index)) as DaemonResponse;
+      let response: DaemonResponse;
+      try {
+        response = JSON.parse(buffer.slice(0, index));
+      } catch (error: any) {
+        socket.end();
+        settle(() => reject(new Error(`Malformed response from the daemon: ${error?.message ?? error}`)));
+        return;
+      }
       socket.end();
-      if (response.ok)
-        resolve(response.result);
-      else
-        reject(new Error(response.error ?? 'Unknown daemon error'));
+      settle(() => {
+        if (response.ok)
+          resolve(response.result);
+        else
+          reject(new Error(response.error ?? 'Unknown daemon error'));
+      });
     });
-    socket.on('error', reject);
-    socket.write(JSON.stringify({ ...request, id: 1 }) + '\n');
+    socket.on('error', error => settle(() => reject(error)));
+    socket.on('close', () => settle(() => reject(new Error(
+      `The daemon closed the connection unexpectedly. See ${daemonLogPath()}`
+    ))));
+    socket.write(JSON.stringify(payload) + '\n');
   });
+}
+
+export async function sendRequest(
+  request: Omit<DaemonRequest, 'id'>,
+  options: SendOptions = {},
+): Promise<any> {
+  const socket = await ensureDaemon(options);
+  return await roundTrip(socket, { ...request, id: 1 });
 }
 
 export async function daemonStatus(options: SendOptions = {}): Promise<any> {
   const socket = await tryConnect(socketPath(), 500);
   if (!socket)
     return { running: false };
-  return await new Promise((resolve, reject) => {
-    let buffer = '';
-    socket.setEncoding('utf8');
-    socket.on('data', chunk => {
-      buffer += chunk;
-      const index = buffer.indexOf('\n');
-      if (index === -1)
-        return;
-      const response = JSON.parse(buffer.slice(0, index)) as DaemonResponse;
-      socket.end();
-      if (response.ok)
-        resolve(response.result);
-      else
-        reject(new Error(response.error ?? 'Unknown daemon error'));
-    });
-    socket.on('error', reject);
-    socket.write(JSON.stringify({ id: 1, type: 'status' }) + '\n');
-  });
+  return await roundTrip(socket, { id: 1, type: 'status' });
 }

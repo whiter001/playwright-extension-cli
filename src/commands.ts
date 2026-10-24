@@ -133,16 +133,22 @@ export const commands: CommandSpec[] = [
   },
   {
     name: 'fill',
-    usage: 'fill <target=value> [<target=value> ...]',
-    summary: 'Fill several fields at once (target=value pairs)',
-    build: positional => {
+    usage: 'fill <target=value> [...] [--type <textbox|checkbox|radio|combobox|slider>]',
+    summary: 'Fill several fields at once (target=value pairs; default type textbox)',
+    valueFlags: ['type'],
+    build: (positional, flags) => {
       if (!positional.length)
         throw new UsageError('Missing argument. Usage: fill <target=value> [<target=value> ...]');
+      // browser_fill_form requires name and type alongside target and value.
+      // The name is only a human-readable label for the permission prompt, so
+      // the target doubles as the name.
+      const type = typeof flags.type === 'string' ? flags.type : 'textbox';
       const fields = positional.map(entry => {
         const index = entry.indexOf('=');
         if (index === -1)
           throw new UsageError(`Expected <target>=<value>, got "${entry}"`);
-        return { target: entry.slice(0, index), value: entry.slice(index + 1) };
+        const target = entry.slice(0, index);
+        return { target, name: target, type, value: entry.slice(index + 1) };
       });
       return { tool: 'browser_fill_form', arguments: { fields } };
     },
@@ -283,10 +289,29 @@ export const commands: CommandSpec[] = [
     build: positional => {
       const action = positional[0] ?? 'list';
       const args: Record<string, any> = { action };
+      const optionalIndex = () => {
+        const raw = positional[1];
+        if (raw === undefined)
+          return undefined;
+        const index = Number(raw);
+        if (Number.isNaN(index))
+          throw new UsageError(`Expected a tab index, got "${raw}"`);
+        return index;
+      };
       if (action === 'new')
         args.url = need(positional, 1, 'tabs new <url>');
-      if (action === 'select' || action === 'close')
-        args.index = Number(need(positional, 1, `tabs ${action} <index>`));
+      if (action === 'select') {
+        const index = optionalIndex();
+        if (index === undefined)
+          throw new UsageError('Missing argument. Usage: tabs select <index>');
+        args.index = index;
+      }
+      if (action === 'close') {
+        // Omit the index to close the current tab (upstream default).
+        const index = optionalIndex();
+        if (index !== undefined)
+          args.index = index;
+      }
       return { tool: 'browser_tabs', arguments: args };
     },
   },

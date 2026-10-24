@@ -20,7 +20,7 @@
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
-    "test": "npm run build && node scripts/relay-test.mjs",
+    "test": "npm run build && node scripts/args-test.mjs && node scripts/relay-test.mjs",
     "test:manual": "npm run build && node scripts/manual-path-test.mjs",
     "test:cli": "npm run build && node scripts/cli-test.mjs",
     "test:chrome": "scripts/setup-test-chrome.sh",

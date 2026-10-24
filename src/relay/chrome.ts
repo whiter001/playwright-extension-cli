@@ -26,6 +26,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { log } from '../log';
+
 // Also pinned via the "key" field in the extension's manifest.json.
 export const playwrightExtensionId = 'mmlmfjhmonkocbjadbfplnigmagldckm';
 
@@ -390,6 +392,37 @@ export async function readExtensionToken(profileDir: string): Promise<string | u
   return undefined;
 }
 
+/**
+ * Spawns a detached helper process.
+ *
+ * The 'error' listener is mandatory: without it a failed spawn (missing
+ * executable, no permission) emits an unhandled 'error' event and takes the
+ * whole daemon down.
+ */
+export function spawnDetached(command: string, args: string[]): void {
+  try {
+    const child = spawn(command, args, {
+      windowsHide: true,
+      detached: true,
+      shell: false,
+      stdio: 'ignore',
+    });
+    child.on('error', error => log.warn(`Failed to launch "${command}": ${error.message}`));
+    child.unref();
+  } catch (error: any) {
+    log.warn(`Failed to launch "${command}": ${error?.message ?? error}`);
+  }
+}
+
+/**
+ * Extracts the macOS application name from a browser executable path, e.g.
+ * `/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge` becomes
+ * `Microsoft Edge`.
+ */
+export function macAppNameForExecutable(executablePath: string): string | undefined {
+  return executablePath.match(/\/([^/]+)\.app\/Contents\/MacOS\//)?.[1];
+}
+
 export function openConnectPage(options: {
   executablePath: string;
   userDataDir?: string;
@@ -407,10 +440,5 @@ export function openConnectPage(options: {
     args.push('--no-sandbox');
   args.push(options.url);
 
-  spawn(options.executablePath, args, {
-    windowsHide: true,
-    detached: true,
-    shell: false,
-    stdio: 'ignore',
-  }).unref();
+  spawnDetached(options.executablePath, args);
 }

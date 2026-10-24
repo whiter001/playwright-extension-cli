@@ -51,7 +51,7 @@ node dist/cli.js navigate https://example.com
 | `click <target> [--double] [--button <left\|right\|middle>]` | 点击元素（ref 或 CSS 选择器） |
 | `hover <target>` | 悬停 |
 | `type <target> <text> [--submit] [--slowly]` | 输入文本 |
-| `fill <target=value> [...]` | 一次填多个字段 |
+| `fill <target=value> [...] [--type <type>]` | 一次填多个字段（默认 `textbox`，可传 `checkbox`/`radio`/`combobox`/`slider`） |
 | `press <key>` | 按键（Enter / ArrowLeft / a …） |
 | `select <target> <value>` | 下拉选择 |
 | `drag <start> <end>` | 拖拽 |
@@ -144,7 +144,7 @@ daemon ── relay (WebSocket, 127.0.0.1)
 npm run typecheck
 npm run build
 
-# 1) 离线 relay 测试（假扩展 + 裸 CDP 客户端，不需要 Chrome）
+# 1) 离线测试：参数映射 + relay（假扩展），不需要 Chrome
 npm test
 
 # 2) 手动选标签页的全链路测试（真扩展 + 隔离 Chrome，CDP 自动点授权）
@@ -157,6 +157,9 @@ npm run test:cli
 # 4) 对着你日常用的 Chrome 跑 MCP server（需要在 Chrome 里点一下）
 node scripts/e2e.mjs
 ```
+
+`scripts/args-test.mjs` 遍历全部命令，把 CLI 参数映射成 tool 调用后**用上游 zod schema 校验**，
+所以命令语法和工具 schema 对不上时会直接失败（`fill` 少传 `name`/`type` 这类 bug 就是它兜住的）。
 
 `scripts/relay-test.mjs` 用一个假扩展实现协议 v2，断言 relay 的握手时序、
 tab ↔ session 映射、命令路由与错误传播。

@@ -49,6 +49,22 @@ type CDPCommand = {
   params?: any;
 };
 
+/**
+ * Raised when the relay is torn down on purpose rather than failing.
+ *
+ * Callers use this to keep normal shutdown out of the error log.
+ */
+export class RelayStoppedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'RelayStoppedError';
+  }
+}
+
+export function isRelayStopped(error: unknown): boolean {
+  return error instanceof RelayStoppedError;
+}
+
 type CDPResponse = CDPMessage;
 
 export class CDPRelayServer {
@@ -86,7 +102,12 @@ export class CDPRelayServer {
       this._resolveExtensionConnection = resolve;
       this._rejectExtensionConnection = reject;
     });
-    void this._extensionConnectionPromise.catch(logUnhandledError);
+    void this._extensionConnectionPromise.catch(error => {
+      if (isRelayStopped(error))
+        log.debug('Extension connection closed:', (error as Error).message);
+      else
+        log.error(error);
+    });
 
     this._wsServer = new WSServer({
       isAllowedPathname: pathname => pathname === this._cdpPath || pathname === this._extensionPath,
@@ -139,7 +160,10 @@ export class CDPRelayServer {
 
   private _closeConnections(reason: string) {
     this._closeCDPConnection(reason);
-    this._closeExtensionConnection(reason);
+    // Intentional teardown: the rejection this raises must not be reported as
+    // a connection failure, or it masks the real reason a session never came
+    // up (a token mismatch, a missing extension, ...).
+    this._closeExtensionConnection(reason, true);
   }
 
   private _handlePlaywrightConnection(ws: WebSocket): void {
@@ -172,9 +196,9 @@ export class CDPRelayServer {
     log.debug('CDP client connected');
   }
 
-  private _closeExtensionConnection(reason: string) {
+  private _closeExtensionConnection(reason: string, intentional = false) {
     this._extensionConnection?.close(reason);
-    this._rejectExtensionConnection(new Error(reason));
+    this._rejectExtensionConnection(intentional ? new RelayStoppedError(reason) : new Error(reason));
   }
 
   private _closeCDPConnection(reason: string) {

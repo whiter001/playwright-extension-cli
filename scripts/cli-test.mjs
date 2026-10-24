@@ -12,6 +12,7 @@
 
 import assert from 'assert';
 import { execFileSync, spawn } from 'child_process';
+import http from 'http';
 
 import { WebSocket } from 'ws';
 
@@ -140,6 +141,31 @@ const jsonResult = await runCli(['eval', '() => 1 + 1', '--json', '--user-data-d
 const parsed = JSON.parse(jsonResult.stdout);
 assert.ok(parsed.content?.length, '--json should return the raw tool result');
 console.log('✓ --json returns the raw tool result');
+
+// ─── 4b. fill regression: browser_fill_form needs name and type ──────
+
+// A local page: Chrome refuses top-level `data:` navigation, so serve the
+// form over HTTP instead.
+const formServer = http.createServer((request, response) => {
+  response.writeHead(200, { 'content-type': 'text/html' });
+  response.end('<!doctype html><title>form</title><input id="a"><input id="b">');
+});
+await new Promise(resolve => formServer.listen(0, '127.0.0.1', resolve));
+const formUrl = `http://127.0.0.1:${formServer.address().port}/`;
+
+const formNav = await runCli(['navigate', formUrl, '--user-data-dir', PROFILE, '--token', '']);
+assert.strictEqual(formNav.code, 0, `navigate to the form failed:\n${formNav.stdout}\n${formNav.stderr}`);
+
+const filled = await runCli(['fill', '#a=hello', '#b=world', '--user-data-dir', PROFILE, '--token', '']);
+assert.strictEqual(filled.code, 0, `fill failed:\n${filled.stdout}\n${filled.stderr}`);
+
+const readback = await runCli([
+  'eval', '() => [...document.querySelectorAll("input")].map(i => i.value).join(",")',
+  '--user-data-dir', PROFILE, '--token', '',
+]);
+assert.match(readback.stdout, /hello,world/, `fill did not reach the inputs:\n${readback.stdout}`);
+console.log('✓ fill writes into the form fields');
+formServer.close();
 
 // ─── 5. status and disconnect ─────────────────────────────────────────
 

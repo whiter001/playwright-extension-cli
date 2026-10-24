@@ -16,14 +16,16 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { chromium } from 'playwright-core';
 
 import { log } from './log';
-import { CDPRelayServer } from './relay/cdpRelay';
+import { isRelayStopped, CDPRelayServer } from './relay/cdpRelay';
 import { VERSION } from './relay/protocol';
 import {
   buildConnectUrl,
   findBrowserExecutable,
+  macAppNameForExecutable,
   openConnectPage,
   readExtensionToken,
   resolveExtensionProfile,
+  spawnDetached,
 } from './relay/chrome';
 
 import type { Browser, BrowserContext } from 'playwright-core';
@@ -118,6 +120,7 @@ async function establishWithFallback(
   relay: CDPRelayServer,
   connectUrl: string,
   options: ExtensionServerOptions,
+  executablePath: string,
 ): Promise<void> {
   const firstAttemptMs = 8_000;
   try {
@@ -125,28 +128,33 @@ async function establishWithFallback(
     return;
   } catch (error) {
     log.warn('The extension did not connect yet; retrying through the system handler.');
-    openConnectPageViaSystem(connectUrl);
-    await relay.establishExtensionConnection(options.connectTimeoutMs ?? 0);
+    openConnectPageViaSystem(connectUrl, executablePath);
+    // Pass the value through untouched: `undefined` lets the relay apply its
+    // own default (30s with a token, wait forever without one). Substituting 0
+    // here would disable that guard and hang forever on a bad token.
+    await relay.establishExtensionConnection(options.connectTimeoutMs);
   }
 }
 
 /**
- * Opens a URL with the system default handler for the browser.
+ * Opens the connect page through the OS handler, for the case where handing
+ * the URL to an already running browser instance does not work.
  *
- * On macOS we target Google Chrome explicitly: only Chrome can load a
- * `chrome-extension://` page.
+ * The browser matters: a `chrome-extension://` page only loads in the browser
+ * that has the extension installed, so we derive the macOS application name
+ * from the executable we resolved rather than assuming Chrome.
  */
-function openConnectPageViaSystem(url: string): void {
-  try {
-    if (process.platform === 'darwin') {
-      spawn('/usr/bin/open', ['-a', 'Google Chrome', url], { detached: true, stdio: 'ignore' }).unref();
-    } else if (process.platform === 'win32') {
-      spawn('cmd', ['/c', 'start', '""', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    } else {
-      spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
-    }
-  } catch (error) {
-    log.debug('Could not open the connect page through the system handler:', error);
+function openConnectPageViaSystem(url: string, executablePath: string): void {
+  if (process.platform === 'darwin') {
+    const appName = macAppNameForExecutable(executablePath);
+    if (appName)
+      spawnDetached('/usr/bin/open', ['-a', appName, url]);
+    else
+      spawnDetached('/usr/bin/open', [url]);
+  } else if (process.platform === 'win32') {
+    spawnDetached('cmd', ['/c', 'start', '""', url]);
+  } else {
+    spawnDetached('xdg-open', [url]);
   }
 }
 
@@ -198,7 +206,7 @@ export async function connectToExtension(options: ExtensionServerOptions = {}): 
   openConnectPage({ executablePath, userDataDir, profileDirectory, channel, url: connectUrl });
 
   try {
-    await establishWithFallback(relay, connectUrl, options);
+    await establishWithFallback(relay, connectUrl, options, executablePath);
     const browser = await chromium.connectOverCDP(relay.cdpEndpoint(), {
       // The relay lives on the same host, so skip proxy handling.
       isLocal: true,
@@ -268,7 +276,12 @@ export type RunningServer = {
  */
 export async function startStdioServer(options: ExtensionServerOptions = {}): Promise<RunningServer> {
   const session = connectToExtension(options);
-  session.catch(error => log.error('Extension connection failed:', error));
+  session.catch(error => {
+    if (isRelayStopped(error))
+      log.debug('Extension connection closed:', (error as Error).message);
+    else
+      log.error('Extension connection failed:', error);
+  });
 
   const config = {
     extension: true,
