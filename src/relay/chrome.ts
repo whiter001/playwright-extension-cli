@@ -320,6 +320,76 @@ export function buildConnectUrl(options: {
   return url.toString();
 }
 
+// ─── Extension auth token ─────────────────────────────────────────────
+
+/**
+ * Reads the extension's auth token out of the browser profile.
+ *
+ * The extension keeps its token in `localStorage["auth-token"]` on the
+ * `chrome-extension://<id>` origin, which Chrome stores in the profile's
+ * `Local Storage/leveldb` LevelDB. The entries are raw key/value pairs with
+ * no stable ordering and no clean separator, so we look for the extension id
+ * and a 43 character base64url token in the same neighbourhood.
+ *
+ * The newest file wins: LevelDB file numbers increase with time and the
+ * current WAL (`.log`) holds the most recent writes. Stale tokens from
+ * earlier sessions survive in older files, hence the ordering.
+ *
+ * @param profileDir the profile directory, e.g. `<user data dir>/Default`
+ */
+export async function readExtensionToken(profileDir: string): Promise<string | undefined> {
+  const leveldbDir = path.join(profileDir, 'Local Storage', 'leveldb');
+  let entries: string[];
+  try {
+    entries = await fs.promises.readdir(leveldbDir);
+  } catch {
+    return undefined;
+  }
+
+  const files = entries
+    .filter(name => name.endsWith('.ldb') || name.endsWith('.log'))
+    .sort((a, b) => {
+      const isLog = (name: string) => (name.endsWith('.log') ? 1 : 0);
+      const number = (name: string) => parseInt(name.replace(/\D/g, ''), 10) || 0;
+      return isLog(b) - isLog(a) || number(b) - number(a);
+    });
+
+  // The id is stored as one blob, but LevelDB may split it across blocks.
+  const idPattern = new RegExp(
+    'mmlmfjh[\\s\\S]{0,16}ocbjadbfplnigmagldckm',
+    'g',
+  );
+  const tokenPattern = /[A-Za-z0-9_-]{43}/g;
+
+  for (const file of files) {
+    let data: Buffer;
+    try {
+      const stat = await fs.promises.stat(path.join(leveldbDir, file));
+      if (stat.size > 64 * 1024 * 1024)
+        continue;
+      data = await fs.promises.readFile(path.join(leveldbDir, file));
+    } catch {
+      continue;
+    }
+
+    const text = data.toString('latin1');
+    const candidates: { token: string; offset: number }[] = [];
+    for (const idMatch of text.matchAll(idPattern)) {
+      const from = Math.max(0, idMatch.index! - 512);
+      const window = text.slice(from, idMatch.index! + 512);
+      for (const tokenMatch of window.matchAll(tokenPattern)) {
+        candidates.push({ token: tokenMatch[0], offset: from + tokenMatch.index! });
+      }
+    }
+    if (candidates.length) {
+      // Later offsets hold the newer value.
+      candidates.sort((a, b) => b.offset - a.offset);
+      return candidates[0].token;
+    }
+  }
+  return undefined;
+}
+
 export function openConnectPage(options: {
   executablePath: string;
   userDataDir?: string;

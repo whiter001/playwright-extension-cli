@@ -11,7 +11,7 @@
  */
 
 import assert from 'assert';
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 
 import { WebSocket } from 'ws';
 
@@ -96,6 +96,11 @@ async function approveExtensionConnection() {
   throw new Error('could not click "Allow & select"');
 }
 
+// ─── 0. make sure we start from a clean slate ─────────────────────────
+
+await runCli(['disconnect']).catch(() => {});
+await new Promise(resolve => setTimeout(resolve, 1000));
+
 // ─── 1. no session yet ────────────────────────────────────────────────
 
 const statusBefore = await runCli(['status']);
@@ -152,4 +157,18 @@ assert.match(statusFinal.stdout, /no session/, 'the session should be gone after
 console.log('✓ disconnect tears the session down');
 
 console.log('\nCLI end-to-end test passed.');
+teardown();
 process.exit(0);
+
+/**
+ * Kills the isolated Chrome instance. A second Chrome instance with a
+ * different --user-data-dir hijacks the command line hand-over on macOS,
+ * which breaks URL opening in the user's own browser.
+ */
+function teardown() {
+  try {
+    execFileSync('pkill', ['-f', `user-data-dir=${PROFILE}`]);
+  } catch {
+    // nothing to kill
+  }
+}

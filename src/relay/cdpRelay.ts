@@ -120,14 +120,15 @@ export class CDPRelayServer {
    * Without a token the user has to approve the connection in the browser,
    * which can take arbitrarily long — hence the default of "wait forever".
    */
-  async establishExtensionConnection(): Promise<void> {
+  async establishExtensionConnection(timeoutMs?: number): Promise<void> {
     log.debug('Establishing extension connection');
     log.debug('Waiting for incoming extension connection');
-    const deadline = this._connectTimeoutMs ? Date.now() + this._connectTimeoutMs : 0;
+    const timeout = timeoutMs ?? this._connectTimeoutMs;
+    const deadline = timeout ? Date.now() + timeout : 0;
     await raceAgainstDeadline(async () => {
       await this._extensionConnectionPromise;
       await this._handler.ready();
-    }, deadline);
+    }, deadline, timeout);
     log.debug('Extension connection established');
   }
 
@@ -331,13 +332,13 @@ class ExtensionConnection {
   }
 }
 
-async function raceAgainstDeadline<T>(action: () => Promise<T>, deadline: number): Promise<T> {
+async function raceAgainstDeadline<T>(action: () => Promise<T>, deadline: number, timeoutMs: number): Promise<T> {
   if (!deadline)
     return await action();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(
-      `Playwright extension did not connect within ${(deadline - Date.now()) / 1000}s. ` +
+      `Playwright extension did not connect within ${timeoutMs / 1000}s. ` +
       `Check that the extension is installed in the selected Chrome profile, and that ` +
       `PLAYWRIGHT_MCP_EXTENSION_TOKEN (if set) matches the token shown on the extension status page.`
     )), Math.max(0, deadline - Date.now()));

@@ -112,10 +112,10 @@ function sessionOptions(session: SessionFlags): ExtensionServerOptions {
     executablePath: session.executablePath ?? process.env.PLAYWRIGHT_MCP_EXECUTABLE_PATH,
     profileDirName: session.profileDirName ?? process.env.PLAYWRIGHT_MCP_PROFILE_DIR_NAME,
     userDataDir: session.userDataDir,
-    // An explicit empty token means "no token": it disables the env fallback
-    // so a stale PLAYWRIGHT_MCP_EXTENSION_TOKEN cannot break the manual
-    // approval flow.
-    token: session.token !== undefined ? session.token : process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN,
+    // The token is resolved in the session layer: an explicit --token wins,
+    // then the token stored in the browser profile, then the environment.
+    // `--token ""` explicitly disables it.
+    token: session.token,
     clientName: session.clientName ?? 'playwright-mcp-cli',
     outputDir: session.outputDir,
     connectTimeoutMs: session.connectTimeoutMs,

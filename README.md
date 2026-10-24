@@ -120,6 +120,22 @@ daemon ── relay (WebSocket, 127.0.0.1)
 **为什么需要 daemon**：扩展的 WebSocket 断了连接就没了 —— CLI 单次执行退出的话，
 每次命令都要重新授权。所以连接常驻 daemon，命令通过 unix socket 走。
 
+### 扩展 ID 与认证 token
+
+| | 怎么来的 |
+| --- | --- |
+| **扩展 ID** | 硬编码常量 `mmlmfjhmonkocbjadbfplnigmagldckm`（`src/relay/chrome.ts`）。它由扩展 manifest 的 `key` 字段固定，升级不变。用于拼 `chrome-extension://<id>/connect.html` 和定位 profile 里的扩展目录。 |
+| **token** | 扩展把它存在自己页面的 `localStorage["auth-token"]`（`chrome-extension://<id>` origin）。CLI 的解析顺序：**`--token <值>` → 从浏览器 profile 自动发现 → `PLAYWRIGHT_MCP_EXTENSION_TOKEN` 环境变量 → 无 token（手动授权）**。 |
+
+自动发现的做法是读 profile 的 `Local Storage/leveldb`（Chrome 把扩展页面的 localStorage 存在这），
+在扩展 ID 附近找那个 43 位 base64url token，取**最新**的文件（LevelDB 文件号随时间递增）。
+这一步是为了避免环境变量里的 token 过期 —— 扩展重装 / profile 重置后环境变量不会自动更新。
+
+**从哪手动拿 token**：点扩展图标打开状态页，上面直接显示 `PLAYWRIGHT_MCP_EXTENSION_TOKEN=...`。
+
+> 注意：token 是通过 connect 页的 URL 参数传的，会进 Chrome 的历史记录。不想留痕就别用 token，
+> 走手动授权即可（`--token ""` 可强制忽略环境变量）。
+
 协议细节（命令 / 事件 / 消息帧）见 `src/relay/protocol.ts`。
 
 ## 开发与测试

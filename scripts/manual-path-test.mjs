@@ -16,6 +16,7 @@
 
 import assert from 'assert';
 import { createRequire } from 'module';
+import { execFileSync } from 'child_process';
 
 import { WebSocket } from 'ws';
 
@@ -165,4 +166,9 @@ await client.close();
 await browser.close().catch(() => {});
 relay.stop();
 console.log('\nManual-path test passed.');
+try {
+  execFileSync('pkill', ['-f', 'user-data-dir=/tmp/pw-test-profile']);
+} catch {
+  // nothing to kill
+}
 process.exit(0);

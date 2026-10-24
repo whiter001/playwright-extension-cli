@@ -21,6 +21,11 @@ if [[ ! -x "$CHROME" ]]; then
   exit 1
 fi
 
+# A leftover instance would swallow the URL we hand over and keep running
+# against a deleted profile.
+pkill -f "user-data-dir=$DST" 2>/dev/null || true
+sleep 1
+
 echo "==> preparing $DST"
 rm -rf "$DST"
 mkdir -p "$DST/Default/Extensions" "$DST/Default/Local Storage"
@@ -48,7 +53,15 @@ nohup "$CHROME" \
 
 for _ in $(seq 1 30); do
   if curl -sf "http://127.0.0.1:$PORT/json/version" >/dev/null; then
-    echo "==> ready: http://127.0.0.1:$PORT"
+    # Wait until the start page is actually there.
+    for _ in $(seq 1 30); do
+      if curl -sf "http://127.0.0.1:$PORT/json/list" | grep -q '"type": "page"'; then
+        echo "==> ready: http://127.0.0.1:$PORT"
+        exit 0
+      fi
+      sleep 0.5
+    done
+    echo "==> ready (no page): http://127.0.0.1:$PORT"
     exit 0
   fi
   sleep 0.5

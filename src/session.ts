@@ -7,6 +7,9 @@
  * the upstream aria-ref snapshot format.
  */
 
+import { spawn } from 'child_process';
+import path from 'path';
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -19,6 +22,7 @@ import {
   buildConnectUrl,
   findBrowserExecutable,
   openConnectPage,
+  readExtensionToken,
   resolveExtensionProfile,
 } from './relay/chrome';
 
@@ -61,6 +65,92 @@ export type ExtensionSession = {
 };
 
 /**
+ * Resolves the extension auth token.
+ *
+ * Precedence:
+ *   1. `--token <value>` — explicit; `--token ""` forces "no token"
+ *   2. the token stored in the browser profile (auto-discovered)
+ *   3. `PLAYWRIGHT_MCP_EXTENSION_TOKEN`
+ *   4. none — the user approves the connection manually
+ *
+ * The profile wins over the environment variable because the environment
+ * value is a copy that goes stale as soon as the extension is reinstalled or
+ * the profile is reset.
+ */
+async function resolveToken(
+  options: ExtensionServerOptions,
+  userDataDir: string | undefined,
+  profileDirectory: string | undefined,
+): Promise<string | undefined> {
+  if (options.token !== undefined) {
+    log.info(options.token ? 'Using the token passed on the command line.' : 'Token explicitly disabled.');
+    return options.token || undefined;
+  }
+
+  if (userDataDir && profileDirectory) {
+    const discovered = await readExtensionToken(path.join(userDataDir, profileDirectory));
+    if (discovered) {
+      log.info('Using the extension token discovered in the browser profile.');
+      return discovered;
+    }
+  }
+
+  const fromEnv = process.env.PLAYWRIGHT_MCP_EXTENSION_TOKEN;
+  if (fromEnv) {
+    log.info('Using PLAYWRIGHT_MCP_EXTENSION_TOKEN from the environment.');
+    return fromEnv;
+  }
+
+  log.info('No token — approve the connection in the browser.');
+  return undefined;
+}
+
+/**
+ * Waits for the extension to attach.
+ *
+ * The connect page is opened by spawning the browser executable. When another
+ * browser instance is already running, the URL is handed over to it — and if
+ * that hand-over fails (another instance with a different profile eats the
+ * command line), the page never shows up. In that case we retry through the
+ * OS handler, which targets the browser that is actually running.
+ */
+async function establishWithFallback(
+  relay: CDPRelayServer,
+  connectUrl: string,
+  options: ExtensionServerOptions,
+): Promise<void> {
+  const firstAttemptMs = 8_000;
+  try {
+    await relay.establishExtensionConnection(firstAttemptMs);
+    return;
+  } catch (error) {
+    log.warn('The extension did not connect yet; retrying through the system handler.');
+    openConnectPageViaSystem(connectUrl);
+    await relay.establishExtensionConnection(options.connectTimeoutMs ?? 0);
+  }
+}
+
+/**
+ * Opens a URL with the system default handler for the browser.
+ *
+ * On macOS we target Google Chrome explicitly: only Chrome can load a
+ * `chrome-extension://` page.
+ */
+function openConnectPageViaSystem(url: string): void {
+  try {
+    if (process.platform === 'darwin') {
+      spawn('/usr/bin/open', ['-a', 'Google Chrome', url], { detached: true, stdio: 'ignore' }).unref();
+    } else if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '""', url], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    } else {
+      spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+    }
+  } catch (error) {
+    log.debug('Could not open the connect page through the system handler:', error);
+  }
+}
+
+/**
  * Opens the Playwright Extension connect page, waits for the extension to
  * attach, and returns a browser connected over CDP through the relay.
  */
@@ -86,14 +176,15 @@ export async function connectToExtension(options: ExtensionServerOptions = {}): 
   });
   log.info(`Using ${channel} profile "${profileDirectory ?? '(default)'}"${userDataDir ? ` in ${userDataDir}` : ''}`);
 
+  const token = await resolveToken(options, userDataDir, profileDirectory);
   const relay = new CDPRelayServer({
     protocolVersion: VERSION,
-    token: options.token,
+    token,
     // With a token the extension either connects or rejects the token
     // outright, so waiting forever would hide the failure. Without a token
     // the user has to approve the connection manually — that can take
     // arbitrarily long.
-    connectTimeoutMs: options.connectTimeoutMs ?? (options.token ? 30_000 : 0),
+    connectTimeoutMs: options.connectTimeoutMs ?? (token ? 30_000 : 0),
   });
   await relay.start();
 
@@ -101,13 +192,13 @@ export async function connectToExtension(options: ExtensionServerOptions = {}): 
     relayUrl: relay.extensionEndpoint(),
     clientName,
     protocolVersion: VERSION,
-    token: options.token,
+    token,
   });
   log.info(`Opening the Playwright Extension connect page for "${clientName}"...`);
   openConnectPage({ executablePath, userDataDir, profileDirectory, channel, url: connectUrl });
 
   try {
-    await relay.establishExtensionConnection();
+    await establishWithFallback(relay, connectUrl, options);
     const browser = await chromium.connectOverCDP(relay.cdpEndpoint(), {
       // The relay lives on the same host, so skip proxy handling.
       isLocal: true,
@@ -126,9 +217,13 @@ export async function connectToExtension(options: ExtensionServerOptions = {}): 
       browser,
       context,
       relay,
+      // NOTE: never call browser.close() here. On a CDP-attached browser that
+      // closes the *user's* tabs (Playwright closes every page of the default
+      // context before disconnecting). Dropping the relay is enough: the
+      // extension sees the socket close, detaches the debugger and cleans up
+      // its tab group.
       close: async () => {
         relay.stop();
-        await browser.close().catch(() => {});
       },
     };
   } catch (error) {
