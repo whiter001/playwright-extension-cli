@@ -204,6 +204,10 @@ tab ↔ session 映射、命令路由与错误传播。
 `scripts/skill-test.mjs` 校验内置 skill 的 frontmatter、命令参考文档有没有和
 `src/commands.ts` 漂移，以及 `install --skills` 是不是真的把文件装到了它宣称的位置。
 
+`scripts/token-test.mjs` 用合成的 LevelDB 字节样本测扩展 token 的自动发现：Chrome 把
+origin id 存成带二进制间隙的片段、token 存在紧跟其后的 record 里，测试按这个真实布局造
+样本，不用浏览器也不用真实 profile。
+
 `scripts/manual-path-test.mjs` 与 `scripts/cli-test.mjs` 会用 CDP 打开扩展的连接页
 并自己点掉「Allow & select」，然后断言扩展连回 relay、挂上被选中的真实标签页、
 上游工具层能跑出带 aria ref 的 `browser_snapshot`，以及 CLI 各子命令的行为。
