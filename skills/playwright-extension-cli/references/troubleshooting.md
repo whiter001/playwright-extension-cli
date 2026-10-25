@@ -96,10 +96,45 @@ pwcli disconnect
 pwcli connect --browser msedge --profile-dir-name "Profile 1"
 ```
 
+### 报 `A "chrome" session is already running with a different configuration: ...`
+
+已经有一个该 browser 的会话在跑，而且它用的参数和你这次要的不一样
+（profile、可执行文件或 user data 目录对不上）。这是**故意拦下来的**，
+避免把你悄悄接到别人的会话上。
+
+```bash
+pwcli status                   # 看现在有哪些会话
+pwcli disconnect               # 结束它，再用自己的参数连
+pwcli connect --browser msedge --profile-dir-name "Profile 1"
+```
+
 ### 想同时跑两个会话
 
-当前实现是**单会话**（一个 daemon、一个 socket）。要并行就分开跑：不同目录、不同
-`--client-name` 的两个 CLI 进程目前会抢同一个 socket，不支持。
+**不同浏览器可以直接并行**：每个 browser channel 有自己的 daemon 和 socket，
+Chrome 和 Edge 能同时连着：
+
+```bash
+pwcli connect --browser chrome    # 终端 A
+pwcli connect --browser msedge    # 终端 B
+pwcli status                      # 两个会话都会列出来
+```
+
+**同一个浏览器的不同 profile 不行** —— 它们共用一个 daemon，会被上面那条
+`already running` 拦下。这种情况用 `--browser` 区分不了，只能串行，
+或者用 `pwcli mcp --browser <channel>` 起一个不占 daemon 的独立 stdio 会话。
+
+### `connect --token X` 之后还是要点「允许」
+
+**token 属于会话，不属于命令。** 会话用的是 daemon 启动时拿到的 token，
+所以对着一个已经在跑的会话执行 `pwcli connect --token X` 不会换 token。
+
+```bash
+pwcli disconnect --browser msedge
+pwcli connect --browser msedge --token X     # 这次 daemon 才带上这个 token
+```
+
+token 在扩展的状态页上（就是 connect 页上那行 `PLAYWRIGHT_MCP_EXTENSION_TOKEN=...`）。
+Edge 里如果还没有 token，CLI 自动发现不到，就只能手动点「Allow & select」。
 
 ## 只想确认扩展还在不在
 

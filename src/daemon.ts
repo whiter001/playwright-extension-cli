@@ -18,8 +18,10 @@ import path from 'path';
 import { log } from './log';
 import { isRelayStopped } from './relay/cdpRelay';
 import { connectToExtension, createToolClient } from './session';
+import { disconnectHint, normalizeChannel, normalizeIdentity } from './identity';
 
 import type { ExtensionServerOptions } from './session';
+import type { SessionIdentity } from './identity';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 export const DEFAULT_CAPABILITIES = ['core', 'pdf', 'storage', 'vision', 'network'];
@@ -40,18 +42,55 @@ function isWindowsPipe(target: string): boolean {
   return process.platform === 'win32' && target.startsWith('\\\\.\\pipe\\');
 }
 
-export function socketPath(): string {
+/**
+ * The socket of a browser channel.
+ *
+ * Sessions are isolated per browser: a Chrome session and an Edge session use
+ * different sockets and therefore different daemons, so two agents can drive
+ * two browsers at the same time.
+ *
+ * Chrome keeps the historical name so that a daemon started by an older
+ * release stays reachable instead of being orphaned on a pipe nobody looks at
+ * any more. Every other channel gets its own name.
+ */
+export function socketPath(channel: string = 'chrome'): string {
+  const namespace = normalizeChannel(channel);
+  if (namespace === 'chrome') {
+    if (process.platform === 'win32')
+      return '\\\\.\\pipe\\playwright-mcp-cli-daemon';
+    return path.join(daemonDir(), 'daemon.sock');
+  }
   if (process.platform === 'win32')
-    return '\\\\.\\pipe\\playwright-mcp-cli-daemon';
-  return path.join(daemonDir(), 'daemon.sock');
+    return `\\\\.\\pipe\\playwright-mcp-cli-daemon-${namespace}`;
+  return path.join(daemonDir(), `daemon-${namespace}.sock`);
 }
 
-export function statePath(): string {
-  return path.join(daemonDir(), 'daemon.json');
+export function statePath(channel: string = 'chrome'): string {
+  const namespace = normalizeChannel(channel);
+  return path.join(daemonDir(), namespace === 'chrome' ? 'daemon.json' : `daemon-${namespace}.json`);
 }
 
-export function daemonLogPath(): string {
-  return path.join(daemonDir(), 'daemon.log');
+export function daemonLogPath(channel: string = 'chrome'): string {
+  const namespace = normalizeChannel(channel);
+  return path.join(daemonDir(), namespace === 'chrome' ? 'daemon.log' : `daemon-${namespace}.log`);
+}
+
+/**
+ * The state files of all sessions that are currently registered.
+ *
+ * The state file is written when a daemon starts and removed when it stops,
+ * so the directory listing is the list of sessions that may still be alive.
+ */
+export function statePaths(): string[] {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(daemonDir());
+  } catch {
+    return [];
+  }
+  return entries
+    .filter(entry => /^daemon(?:-[a-z0-9._-]+)?\.json$/i.test(entry))
+    .map(entry => path.join(daemonDir(), entry));
 }
 
 /**
@@ -70,6 +109,16 @@ export type DaemonState = {
   socketPath: string;
   startedAt: string;
   clientName: string;
+  /**
+   * What this session drives. Clients compare it against their own request
+   * before reusing the daemon, so a mismatched session is reported instead of
+   * silently driving the wrong browser or profile.
+   */
+  identity: SessionIdentity;
+  /** Profile the session actually attached to, known once the extension is up. */
+  profileDirectory?: string;
+  /** Why the session failed, when it did. */
+  sessionError?: string;
 };
 
 export type DaemonRequest = {
@@ -121,7 +170,16 @@ function isSocketLive(socketPath: string): Promise<boolean> {
 }
 
 export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
-  const socket = options.socketPath ?? socketPath();
+  // The identity is normalized before the first await: the paths that are
+  // recorded and the paths that are opened have to be the same ones.
+  const identity = normalizeIdentity({
+    browserChannel: options.browserChannel ?? 'chrome',
+    executablePath: options.executablePath,
+    userDataDir: options.userDataDir,
+    profileDirName: options.profileDirName,
+  });
+  const channel = identity.browserChannel;
+  const socket = options.socketPath ?? socketPath(channel);
   const isPipe = isWindowsPipe(socket);
   // The state and log files live in the temp directory; the socket itself may
   // live in the pipe namespace, which is not a directory we can create.
@@ -130,7 +188,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     await fs.promises.mkdir(path.dirname(socket), { recursive: true });
 
   if (await isSocketLive(socket))
-    throw new Error(`Another session daemon is already listening on ${socket}. Run \`pwcli disconnect\` first.`);
+    throw new Error(`Another "${channel}" session daemon is already listening on ${socket}. Run \`${disconnectHint(channel)}\` first.`);
 
   // A stale socket file from a crashed daemon would make bind() fail.
   if (!isPipe)
@@ -167,17 +225,43 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     });
   });
 
-  sessionPromise = connectToExtension(options);
+  const state: DaemonState = {
+    pid: process.pid,
+    socketPath: socket,
+    startedAt: new Date().toISOString(),
+    clientName: options.clientName ?? 'playwright-extension-cli',
+    identity,
+  };
+  const stateFile = statePath(channel);
+  const writeState = async () => {
+    await fs.promises.writeFile(stateFile, JSON.stringify(state, null, 2));
+  };
+  await writeState();
+
+  sessionPromise = connectToExtension({
+    ...options,
+    browserChannel: identity.browserChannel,
+    executablePath: identity.executablePath,
+    userDataDir: identity.userDataDir,
+    profileDirName: identity.profileDirName,
+  });
   sessionPromise.catch(error => {
-    if (isRelayStopped(error))
+    if (isRelayStopped(error)) {
       log.debug('Extension connection closed:', (error as Error).message);
-    else
+    } else {
+      // Remember the reason: "waiting for approval" would be a lie here.
+      state.sessionError = (error as Error)?.message ?? String(error);
       log.error('Extension connection failed:', error);
+    }
+    void writeState();
   });
 
   sessionPromise.then(value => {
     session = value;
     connected = true;
+    // The profile the session actually attached to is only known now.
+    state.profileDirectory = value.identity.profileDirectory;
+    void writeState();
   }).catch(() => {});
 
   // The MCP tool layer is wired up over an in-memory transport pair, so the
@@ -191,14 +275,10 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     log.info('tool layer ready');
     return client;
   });
-
-  const state: DaemonState = {
-    pid: process.pid,
-    socketPath: socket,
-    startedAt: new Date().toISOString(),
-    clientName: options.clientName ?? 'playwright-extension-cli',
-  };
-  await fs.promises.writeFile(statePath(), JSON.stringify(state, null, 2));
+  // The promise is only awaited when a tool request comes in, so a failed
+  // session would otherwise reject it with nobody listening — and Node turns
+  // that into an unhandled rejection, taking the whole daemon down.
+  void clientPromise.catch(() => {});
 
   log.info(`daemon listening on ${socket} (pid ${process.pid})`);
 
@@ -207,7 +287,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     // A named pipe disappears with the process that owns it.
     if (!isPipe)
       await fs.promises.rm(socket, { force: true });
-    await fs.promises.rm(statePath(), { force: true });
+    await fs.promises.rm(stateFile, { force: true });
     // The session may still be waiting for the user to approve the extension
     // in Chrome. Blocking teardown on it would leave the daemon alive forever
     // after SIGTERM, so give it a moment and otherwise just exit.

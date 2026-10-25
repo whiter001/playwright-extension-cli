@@ -17,11 +17,12 @@
 import fs from 'fs';
 import path from 'path';
 
-import { daemonStatus, sendRequest } from './client';
+import { daemonStatus, listSessions, sendRequest } from './client';
 import { commands, findCommand, parseArgv, UsageError } from './commands';
 import { daemonLogPath, DEFAULT_CAPABILITIES, runDaemon } from './daemon';
 import { log, setLogLevel } from './log';
 import { installSkill, removeSkill, skillTargets } from './skill';
+import { describeIdentity, normalizeIdentity } from './identity';
 import {
   defaultUserDataDirForChannel,
   findBrowserExecutable,
@@ -34,6 +35,7 @@ import { startStdioServer } from './session';
 
 import type { LogLevel } from './log';
 import type { ExtensionServerOptions } from './session';
+import type { SessionIdentity } from './identity';
 
 const SESSION_VALUE_FLAGS = new Set([
   'browser',
@@ -137,6 +139,25 @@ function daemonArgs(session: SessionFlags): string[] {
   if (options.outputDir) args.push('--output-dir', options.outputDir);
   if (options.connectTimeoutMs !== undefined) args.push('--timeout', String(options.connectTimeoutMs));
   return args;
+}
+
+/**
+ * What the caller expects to drive.
+ *
+ * The channel picks the daemon, so it is always part of the identity. The
+ * overrides only constrain the session when they were given explicitly — an
+ * unset option means "whatever the running session uses". The paths are
+ * resolved against the directory the command was typed in, so the same
+ * session is recognized from anywhere.
+ */
+function expectedIdentity(session: SessionFlags): SessionIdentity {
+  const options = sessionOptions(session);
+  return normalizeIdentity({
+    browserChannel: options.browserChannel!,
+    executablePath: options.executablePath,
+    userDataDir: options.userDataDir,
+    profileDirName: options.profileDirName,
+  });
 }
 
 function printResult(result: any, json: boolean): void {
@@ -446,32 +467,51 @@ async function main(): Promise<void> {
       return;
     }
     case 'status': {
-      const status = await daemonStatus();
+      // An explicit --browser narrows the report to that session; without it
+      // every running session is listed, because they can run side by side.
+      let sessions: any[];
+      if (session.browser !== undefined) {
+        const status = await daemonStatus({ expected: expectedIdentity(session) });
+        sessions = status.running ? [status] : [];
+      } else {
+        sessions = await listSessions();
+      }
       if (session.json) {
-        process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+        process.stdout.write(JSON.stringify(sessions, null, 2) + '\n');
         return;
       }
-      if (!status.running) {
+      if (!sessions.length) {
         process.stdout.write('running:   no session (start one with `pwcli connect`)\n');
         return;
       }
-      process.stdout.write([
-        `running:   yes`,
-        `pid:       ${status.pid ?? '-'}`,
-        `started:   ${status.startedAt ?? '-'}`,
-        `extension: ${status.connected ? 'connected' : 'waiting for approval in Chrome'}`,
-        ...(status.pages?.length ? [`pages:     ${status.pages.join(', ')}`] : []),
-        `log:       ${daemonLogPath()}`,
-      ].join('\n') + '\n');
+      const blocks = sessions.map(status => {
+        const identity = status.identity;
+        return [
+          `running:   yes`,
+          `browser:   ${identity ? describeIdentity({ ...identity, profileDirName: status.profileDirectory ?? identity.profileDirName }) : 'unknown'}`,
+          `pid:       ${status.pid ?? '-'}`,
+          `started:   ${status.startedAt ?? '-'}`,
+          `extension: ${status.connected ? 'connected' : status.sessionError ? `failed — ${status.sessionError}` : 'waiting for approval in the browser'}`,
+          ...(status.pages?.length ? [`pages:     ${status.pages.join(', ')}`] : []),
+          `log:       ${daemonLogPath(identity?.browserChannel)}`,
+        ].join('\n');
+      });
+      process.stdout.write(blocks.join('\n\n') + '\n');
       return;
     }
     case 'connect': {
-      process.stderr.write('Starting the session; approve the extension connection in Chrome...\n');
+      process.stderr.write('Starting the session; approve the extension connection in the browser...\n');
       const deadline = Date.now() + (session.connectTimeoutMs ?? 120_000);
-      let status = await sendRequest({ type: 'status' }, { daemonArgs: daemonArgs(session) });
+      let status = await sendRequest({ type: 'status' }, { daemonArgs: daemonArgs(session), expected: expectedIdentity(session) });
       while (!status.connected && Date.now() < deadline) {
+        // A failed session has a reason — do not wait out the timeout for it.
+        if (status.sessionError) {
+          process.stderr.write(`The session failed: ${status.sessionError}\n`);
+          process.exitCode = 1;
+          return;
+        }
         await new Promise(resolve => setTimeout(resolve, 500));
-        status = await sendRequest({ type: 'status' }, { daemonArgs: daemonArgs(session) });
+        status = await sendRequest({ type: 'status' }, { daemonArgs: daemonArgs(session), expected: expectedIdentity(session) });
       }
       if (!status.connected) {
         process.stderr.write('Timed out waiting for the extension to be approved.\n');
@@ -482,7 +522,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'disconnect': {
-      await sendRequest({ type: 'disconnect' }, { daemonArgs: daemonArgs(session) });
+      await sendRequest({ type: 'disconnect' }, { daemonArgs: daemonArgs(session), expected: expectedIdentity(session) });
       process.stdout.write('disconnected\n');
       return;
     }
@@ -504,7 +544,7 @@ async function main(): Promise<void> {
     tool: call.tool,
     arguments: call.arguments,
     cwd: process.cwd(),
-  }, { daemonArgs: daemonArgs(session) });
+  }, { daemonArgs: daemonArgs(session), expected: expectedIdentity(session) });
 
   printResult(result, session.json);
   if (result?.isError)

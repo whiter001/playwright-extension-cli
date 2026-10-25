@@ -29,6 +29,7 @@ import {
 } from './relay/chrome';
 
 import type { Browser, BrowserContext } from 'playwright-core';
+import type { ResolvedSessionIdentity } from './identity';
 
 // `playwright-core/lib/coreBundle` is the same bundle @playwright/mcp exposes
 // as `createConnection`. It is an internal path, hence the explicit require.
@@ -63,6 +64,8 @@ export type ExtensionSession = {
   browser: Browser;
   context: BrowserContext;
   relay: CDPRelayServer;
+  /** What this session ended up driving, once the paths are resolved. */
+  identity: ResolvedSessionIdentity;
   close: () => Promise<void>;
 };
 
@@ -225,6 +228,12 @@ export async function connectToExtension(options: ExtensionServerOptions = {}): 
       browser,
       context,
       relay,
+      identity: {
+        browserChannel: channel,
+        executablePath,
+        userDataDir,
+        profileDirectory,
+      },
       // NOTE: never call browser.close() here. On a CDP-attached browser that
       // closes the *user's* tabs (Playwright closes every page of the default
       // context before disconnecting). Dropping the relay is enough: the

@@ -33,16 +33,20 @@ allowed-tools: Bash(pwcli:*), Bash(playwright-extension-cli:*)
 ## 会话模型
 
 `connect` 之后，会话由一个**常驻 daemon** 持有，所以后面的每条命令都是毫秒级响应，
-不需要反复在 Chrome 里点授权：
+不需要反复在浏览器里点授权：
 
 ```bash
-pwcli connect      # 打开扩展连接页，在 Chrome 里点「允许」并选一个标签页
+pwcli connect      # 打开扩展连接页，在浏览器里点「允许」并选一个标签页
 pwcli status       # 看会话状态：pid / 扩展是否连上 / 当前页面
 pwcli disconnect   # 收工
 ```
 
-任何命令失败，先 `pwcli status` 看是不是没连上（输出里 `extension: waiting for approval in Chrome`
+任何命令失败，先 `pwcli status` 看是不是没连上（输出里 `extension: waiting for approval in the browser`
 就是还没授权）。
+
+**每个 browser channel 是独立会话**（`--browser chrome` / `--browser msedge` / …），
+Chrome 和 Edge 可以同时连着，`pwcli status` 会把它们都列出来。同一个浏览器的不同 profile
+共用一个会话，会被 `already running` 拦下来 —— 那不是 bug，是防止你接到别人的会话上。
 
 ## 核心循环：快照 → 定位 → 操作 → 取证
 

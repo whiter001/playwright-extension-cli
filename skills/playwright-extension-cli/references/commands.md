@@ -10,7 +10,7 @@
 | 选项 | 说明 |
 | --- | --- |
 | `--json` | 输出原始工具结果（JSON），便于脚本处理 |
-| `--browser <channel>` | `chrome` / `msedge` / `chromium` / …（默认 `chrome`） |
+| `--browser <channel>` | `chrome` / `msedge` / `chromium` / …（默认 `chrome`）；每个 channel 是独立会话 |
 | `--executable-path <path>` | 指定浏览器可执行文件 |
 | `--user-data-dir <path>` | 自定义 User Data 目录 |
 | `--profile-dir-name <name>` | Chrome profile 目录名，如 `Default` / `Profile 1` |
@@ -26,25 +26,29 @@
 
 ### `pwcli connect`
 
-建立会话：打开 Chrome 的扩展连接页，等你在 Chrome 里点「允许」并选一个标签页。
+建立会话：打开扩展连接页，等你在浏览器里点「允许」并选一个标签页。
 成功后由常驻 daemon 持有会话，后续命令都是毫秒级响应。
 
 ```bash
 pwcli connect
+pwcli connect --browser msedge        # 连 Edge，独立的会话
 pwcli connect --timeout 180000        # 默认 120s 超时
 ```
 
+**每个 browser channel 是独立的会话**：Chrome 和 Edge 可以同时连着，互不干扰。
+
 ### `pwcli disconnect`
 
-结束会话并关闭 daemon。
+结束会话并关闭 daemon。只结束 `--browser` 指向的那个会话。
 
 ### `pwcli status`
 
 查看会话状态：pid、扩展是否连上、当前页面 URL、daemon 日志路径。
 
 ```bash
-pwcli status
-pwcli status --json
+pwcli status                   # 列出全部正在运行的会话
+pwcli status --browser msedge  # 只看 Edge 那个
+pwcli status --json            # JSON 数组，每个会话一项
 ```
 
 ### `pwcli doctor`

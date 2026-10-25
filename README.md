@@ -42,7 +42,7 @@ pwcli snapshot
 | --- | --- |
 | `connect` | 启动会话（打开扩展连接页，等你在 Chrome 里授权） |
 | `disconnect` | 结束会话，关闭 daemon |
-| `status` | 查看会话状态（pid / 扩展是否连上 / 当前页面） |
+| `status` | 查看会话状态（pid / 扩展是否连上 / 当前页面）；不带 `--browser` 时列出全部会话 |
 | `tools` | 列出可用的浏览器工具 |
 | `doctor` | 检查浏览器 / profile / 扩展安装情况 |
 | `mcp` | 以 MCP server（stdio）方式暴露同一套工具 |
@@ -134,7 +134,7 @@ pwcli uninstall --skills --skills-dir ./skills # 移除自定义目录里的
 | 选项 | 说明 |
 | --- | --- |
 | `--json` | 输出原始工具结果（JSON），便于脚本处理 |
-| `--browser <channel>` | `chrome` / `msedge` / `chromium` / …（默认 chrome） |
+| `--browser <channel>` | `chrome` / `msedge` / `chromium` / …（默认 chrome）；每个 channel 是独立会话 |
 | `--executable-path <path>` | 指定浏览器可执行文件 |
 | `--user-data-dir <path>` | 自定义 User Data 目录 |
 | `--profile-dir-name <name>` | Chrome profile 目录名，如 `Default` / `Profile 1` |
@@ -176,6 +176,44 @@ daemon ── relay (WebSocket, 127.0.0.1)
 每次命令都要重新授权。所以连接常驻 daemon，命令通过 unix socket 走。
 Windows 没有 unix domain socket，daemon 改用命名管道 `\\.\pipe\playwright-mcp-cli-daemon`，
 其余平台用 `<tmp>/playwright-mcp-cli/daemon.sock`。
+
+### 多会话与浏览器隔离
+
+**daemon 按浏览器分开**。每个 browser channel 有自己的 socket、state 文件和日志，
+所以 Chrome 和 Edge 的会话可以同时存在，互不干扰：
+
+| channel | socket（Windows） |
+| --- | --- |
+| `chrome` | `\\.\pipe\playwright-mcp-cli-daemon` |
+| `msedge` | `\\.\pipe\playwright-mcp-cli-daemon-msedge` |
+| `msedge-beta` | `\\.\pipe\playwright-mcp-cli-daemon-msedge-beta` |
+| `chromium` | `\\.\pipe\playwright-mcp-cli-daemon-chromium` |
+
+（`chrome` 沿用历史管道名，避免老版本启动的 daemon 变成没人认领的孤儿。）
+
+**复用时会校验身份**。同一个 channel 下，daemon 还会记住自己是被用什么参数拉起来的。
+新请求要用的 browser / 可执行文件 / user data 目录 / profile 和它对不上时，
+直接报错，而不是把你悄悄接到别人的会话上：
+
+```
+$ pwcli snapshot --browser chrome --profile-dir-name "Profile 1"
+Error: A "chrome" session is already running with a different configuration:
+the profile directory is "Default", but "Profile 1" was requested.
+Run `pwcli disconnect` to end it first, or start the session with the options it already uses.
+```
+
+**`pwcli status` 会列出所有会话**，带 `--browser` 时只看那一个：
+
+```bash
+pwcli status                    # 列出全部正在运行的会话
+pwcli status --browser msedge   # 只看 Edge 那个
+```
+
+> **token 属于会话，不属于命令。** 会话用的是 daemon 启动时拿到的 token
+> （`--token` > profile 里自动发现 > 环境变量）。所以 `pwcli connect --token X`
+> 遇到已有会话时不会换 token —— 要换先 `pwcli disconnect`。
+> 另外 daemon 一旦启动，`pwcli connect` 的轮询会在它退出时**按原参数重新拉起它**，
+> 所以后台跑着的 `connect` 命令可能把一个你刚改过配置的会话又拉回来。
 
 ### 扩展 ID 与认证 token
 
@@ -228,6 +266,9 @@ tab ↔ session 映射、命令路由与错误传播。
 `scripts/token-test.mjs` 用合成的 LevelDB 字节样本测扩展 token 的自动发现：Chrome 把
 origin id 存成带二进制间隙的片段、token 存在紧跟其后的 record 里，测试按这个真实布局造
 样本，不用浏览器也不用真实 profile。
+
+`scripts/daemon-test.mjs` 测会话隔离、路径规范化、连接清理和旧版 daemon 的状态/断开兼容性，
+并通过不存在的 browser channel 验证真实 daemon 的失败状态及清理；不需要浏览器。
 
 `scripts/manual-path-test.mjs` 与 `scripts/cli-test.mjs` 会用 CDP 打开扩展的连接页
 并自己点掉「Allow & select」，然后断言扩展连回 relay、挂上被选中的真实标签页、
