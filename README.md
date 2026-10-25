@@ -40,6 +40,7 @@ node dist/cli.js navigate https://example.com
 | `tools` | 列出可用的浏览器工具 |
 | `doctor` | 检查浏览器 / profile / 扩展安装情况 |
 | `mcp` | 以 MCP server（stdio）方式暴露同一套工具 |
+| `install --skills` | 把内置 skill 装到编码代理的 skills 目录（见下） |
 
 ### 浏览器
 
@@ -73,6 +74,39 @@ node dist/cli.js navigate https://example.com
 | `close` | 关闭当前页面 |
 
 `<target>` 可以是快照里的 `ref`（如 `e12`），也可以是 CSS 选择器。
+
+### 安装 skill
+
+CLI 自带一份 **Agent Skill**（`SKILL.md` + `references/`），装进编码代理的 skills 目录后，
+Claude Code / Codex / Cursor / Kimi Code 这些 agent 就知道该怎么用命令行驱动浏览器。
+
+```bash
+pwcli install --skills                 # 自动检测本机装过的 agent，装到项目级目录
+pwcli install --skills=claude,kimi     # 指定目标（逗号分隔）
+pwcli install --skills=all             # 全部已知目标
+pwcli install --skills --global        # 装到用户级目录，所有项目都能用
+pwcli install --skills-dir ./skills    # 装到自定义目录
+```
+
+| 目标 | 项目级 | 用户级 |
+| --- | --- | --- |
+| `claude` | `.claude/skills` | `~/.claude/skills` |
+| `agents` | `.agents/skills` | `~/.agents/skills` |
+| `kimi` | `.kimi-code/skills` | `~/.kimi-code/skills`（设了 `KIMI_CODE_HOME` 就用那个） |
+| `codebuddy` | `.codebuddy/skills` | `~/.codebuddy/skills` |
+| `cursor` | `.cursor/skills` | `~/.cursor/skills` |
+| `gemini` | `.gemini/skills` | `~/.gemini/skills` |
+| `copilot` | `.github/skills` | `~/.copilot/skills` |
+
+`.agents/skills` 是 Codex / GitHub Copilot / Cursor / Gemini CLI / Kimi Code 都认的通用约定
+（`codex` 是它的别名），但 **Claude Code 只读 `.claude/skills`** ——
+想一套仓库里所有 agent 都能用，就装两份：`pwcli install --skills=claude,agents`。
+
+不带目标时的判断顺序：**先看当前项目**里有没有 agent 的 skills 目录 → 再看主目录里装过哪些 agent
+→ 都看不出来就装到 `claude`（和上游 `playwright-cli install --skills` 一致）。
+每次安装都会打印实际写到了哪些目录；重复安装幂等，本地改过的 skill 会被内置版本覆盖（有提示）。
+
+> 装到项目级会在仓库里新增这些目录。想让团队共享就提交进版本库；只给自己用就加进 `.gitignore`。
 
 ### 全局选项
 
@@ -144,7 +178,7 @@ daemon ── relay (WebSocket, 127.0.0.1)
 npm run typecheck
 npm run build
 
-# 1) 离线测试：参数映射 + relay（假扩展），不需要 Chrome
+# 1) 离线测试：参数映射 + relay（假扩展）+ skill 安装，不需要 Chrome
 npm test
 
 # 2) 手动选标签页的全链路测试（真扩展 + 隔离 Chrome，CDP 自动点授权）
@@ -163,6 +197,9 @@ node scripts/e2e.mjs
 
 `scripts/relay-test.mjs` 用一个假扩展实现协议 v2，断言 relay 的握手时序、
 tab ↔ session 映射、命令路由与错误传播。
+
+`scripts/skill-test.mjs` 校验内置 skill 的 frontmatter、命令参考文档有没有和
+`src/commands.ts` 漂移，以及 `install --skills` 是不是真的把文件装到了它宣称的位置。
 
 `scripts/manual-path-test.mjs` 与 `scripts/cli-test.mjs` 会用 CDP 打开扩展的连接页
 并自己点掉「Allow & select」，然后断言扩展连回 relay、挂上被选中的真实标签页、

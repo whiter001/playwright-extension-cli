@@ -21,6 +21,7 @@ import { daemonStatus, sendRequest } from './client';
 import { commands, findCommand, parseArgv, UsageError } from './commands';
 import { daemonLogPath, DEFAULT_CAPABILITIES, runDaemon } from './daemon';
 import { log, setLogLevel } from './log';
+import { installSkill, isSkillTargetName, skillTargets } from './skill';
 import {
   defaultUserDataDirForChannel,
   findBrowserExecutable,
@@ -166,6 +167,9 @@ function usage(): string {
     '  doctor                  Check browser / profile / extension setup',
     '  mcp                     Serve the same tools as an MCP server over stdio',
     '',
+    'Install commands:',
+    '  install --skills        Install the agent skill for coding agents',
+    '',
     'Commands:',
   ];
   for (const command of commands)
@@ -228,6 +232,108 @@ async function listTools(): Promise<void> {
     process.stdout.write(`${tool.schema.name.padEnd(34)} ${tool.capability}\n`);
 }
 
+function installUsage(): string {
+  const lines = [
+    'pwcli install --skills[=<targets>] [--global] [--skills-dir <path>]',
+    '',
+    'Installs the bundled agent skill (SKILL.md + references/) into the skills',
+    'folders of the coding agents that speak the Agent Skills format.',
+    '',
+    'Targets:',
+  ];
+  for (const target of skillTargets)
+    lines.push(`  ${target.id.padEnd(12)} ${target.label}`);
+  lines.push(
+    '  all         every target above',
+    '',
+    'Options:',
+    '  --skills[=<targets>]   Install the skill. <targets> is a comma-separated list',
+    '                         of target ids (default: detect the agents installed here)',
+    '  --global, -g           Install into the user-level folders instead of the project',
+    '  --skills-dir <path>    Install into a custom directory (overrides the targets)',
+  );
+  return lines.join('\n');
+}
+
+async function installCommand(argv: string[], session: SessionFlags): Promise<void> {
+  let requested = false;
+  let targets: string[] | undefined;
+  let globalScope = false;
+  let customDir: string | undefined;
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+
+    if (arg === '-h' || arg === '--help') {
+      process.stdout.write(installUsage() + '\n');
+      return;
+    }
+
+    if (arg === '--global' || arg === '-g') {
+      globalScope = true;
+      continue;
+    }
+
+    if (arg === '--skills' || arg.startsWith('--skills=')) {
+      requested = true;
+      let value: string | undefined;
+      if (arg.startsWith('--skills=')) {
+        value = arg.slice('--skills='.length);
+      } else {
+        const next = argv[i + 1];
+        if (next !== undefined && !next.startsWith('-')) {
+          if (!isSkillTargetName(next))
+            throw new UsageError(`Unknown skill target "${next}". Run \`pwcli install --help\` for the list.`);
+          value = next;
+          i++;
+        }
+      }
+      for (const part of (value ?? '').split(',')) {
+        const name = part.trim();
+        if (name)
+          targets = [...(targets ?? []), name];
+      }
+      continue;
+    }
+
+    if (arg === '--skills-dir' || arg.startsWith('--skills-dir=')) {
+      let value: string | undefined;
+      if (arg.startsWith('--skills-dir='))
+        value = arg.slice('--skills-dir='.length);
+      else {
+        value = argv[++i];
+        if (value === undefined)
+          throw new UsageError('Missing value for --skills-dir');
+      }
+      customDir = value;
+      continue;
+    }
+
+    throw new UsageError(`Unknown option for \`install\`: ${arg}`);
+  }
+
+  if (!requested) {
+    process.stderr.write(installUsage() + '\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const result = installSkill({ targets, global: globalScope, customDir, cwd: process.cwd() });
+
+  if (session.json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+
+  const lines = [`Installed skill "${result.skill}" (${result.scope}):`];
+  for (const entry of result.installed)
+    lines.push(`  ${entry.id.padEnd(12)} ${entry.directory}  (${entry.files} files, ${entry.status})`);
+  for (const warning of result.warnings)
+    lines.push(`  warning: ${warning}`);
+  lines.push('Restart the coding agent so it picks the skill up.');
+  process.stdout.write(lines.join('\n') + '\n');
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const { session, rest } = splitSessionFlags(argv);
@@ -253,6 +359,10 @@ async function main(): Promise<void> {
     }
     case 'doctor': {
       await doctor(session);
+      return;
+    }
+    case 'install': {
+      await installCommand(rest.slice(1), session);
       return;
     }
     case 'tools': {
