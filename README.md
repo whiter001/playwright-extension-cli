@@ -88,31 +88,46 @@ Claude Code / Codex / Cursor / Kimi Code 这些 agent 就知道该怎么用命�
 
 ```bash
 pwcli install --skills                 # 自动检测本机装过的 agent，装到项目级目录
-pwcli install --skills=claude,kimi     # 指定目标（逗号分隔）
+pwcli install --skills=claude,agents   # 指定目标（逗号或空格分隔都行）
 pwcli install --skills=all             # 全部已知目标
 pwcli install --skills --global        # 装到用户级目录，所有项目都能用
 pwcli install --skills-dir ./skills    # 装到自定义目录
 ```
 
-| 目标 | 项目级 | 用户级 |
-| --- | --- | --- |
-| `claude` | `.claude/skills` | `~/.claude/skills` |
-| `agents` | `.agents/skills` | `~/.agents/skills` |
-| `kimi` | `.kimi-code/skills` | `~/.kimi-code/skills`（设了 `KIMI_CODE_HOME` 就用那个） |
-| `codebuddy` | `.codebuddy/skills` | `~/.codebuddy/skills` |
-| `cursor` | `.cursor/skills` | `~/.cursor/skills` |
-| `gemini` | `.gemini/skills` | `~/.gemini/skills` |
-| `copilot` | `.github/skills` | `~/.copilot/skills` |
+| 目标 | 项目级 | 用户级 | 谁会读 |
+| --- | --- | --- | --- |
+| `claude` | `.claude/skills` | `~/.claude/skills` | Claude Code |
+| `agents` | `.agents/skills` | `~/.agents/skills` | Codex / Cursor / Gemini CLI / GitHub Copilot / Kimi Code |
+| `kimi` | `.kimi-code/skills` | `~/.kimi-code/skills`（设了 `KIMI_CODE_HOME` 就用那个） | Kimi Code |
+| `codebuddy` | `.codebuddy/skills` | `~/.codebuddy/skills` | CodeBuddy |
+| `cursor` | `.cursor/skills` | `~/.cursor/skills` | Cursor |
+| `gemini` | `.gemini/skills` | `~/.gemini/skills` | Gemini CLI |
+| `copilot` | `.github/skills` | `~/.copilot/skills` | GitHub Copilot |
 
 `.agents/skills` 是 Codex / GitHub Copilot / Cursor / Gemini CLI / Kimi Code 都认的通用约定
-（`codex` 是它的别名），但 **Claude Code 只读 `.claude/skills`** ——
-想一套仓库里所有 agent 都能用，就装两份：`pwcli install --skills=claude,agents`。
+（`codex` 是它的别名），但 **Claude Code 只读 `.claude/skills`**、**CodeBuddy 只读 `.codebuddy/skills`**。
+所以覆盖全部 7 个 agent 的最小集合是三个目录：
+
+```bash
+pwcli install --skills=agents,claude,codebuddy --global
+```
 
 不带目标时的判断顺序：**先看当前项目**里有没有 agent 的 skills 目录 → 再看主目录里装过哪些 agent
 → 都看不出来就装到 `claude`（和上游 `playwright-cli install --skills` 一致）。
 每次安装都会打印实际写到了哪些目录；重复安装幂等，本地改过的 skill 会被内置版本覆盖（有提示）。
 
 > 装到项目级会在仓库里新增这些目录。想让团队共享就提交进版本库；只给自己用就加进 `.gitignore`。
+
+### 卸载 skill
+
+```bash
+pwcli uninstall --skills                       # 从所有已知目标移除
+pwcli uninstall --skills=kimi,gemini --global  # 只移除指定目标
+pwcli uninstall --skills --skills-dir ./skills # 移除自定义目录里的
+```
+
+只删**我们自己装的那个** skill：目标目录里如果 `SKILL.md` 声明的是别人的 skill 名，
+会跳过并在输出里标出来，不会误删。没装过的目标同样只是跳过，不算错误。
 
 ### 全局选项
 

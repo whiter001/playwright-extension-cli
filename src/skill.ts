@@ -263,6 +263,20 @@ function userDirFor(target: SkillTarget, homeDir: string, env: NodeJS.ProcessEnv
   return path.join(homeDir, target.userDir);
 }
 
+type DirectoryContext = {
+  cwd: string;
+  homeDir: string;
+  env: NodeJS.ProcessEnv;
+};
+
+/** The folder the skill lives in for a target, including the skill name. */
+function destinationFor(target: SkillTarget, scope: 'project' | 'user', context: DirectoryContext): string {
+  const base = scope === 'user'
+    ? userDirFor(target, context.homeDir, context.env)
+    : path.resolve(context.cwd, target.projectDir);
+  return path.join(base, skillName);
+}
+
 /**
  * Installs the bundled skill and reports what happened.
  *
@@ -296,8 +310,7 @@ export function installSkill(options: InstallOptions = {}): InstallResult {
   const seen = new Set<string>();
 
   for (const target of targets) {
-    const base = scope === 'user' ? userDirFor(target, homeDir, env) : path.resolve(cwd, target.projectDir);
-    const directory = path.join(base, skillName);
+    const directory = destinationFor(target, scope === 'user' ? 'user' : 'project', { cwd, homeDir, env });
     // Windows paths are case-insensitive: the same folder can be reached with
     // different spellings, so normalise before de-duplicating.
     const key = path.resolve(directory).toLowerCase();
@@ -312,4 +325,112 @@ export function installSkill(options: InstallOptions = {}): InstallResult {
   }
 
   return { skill: skillName, scope, installed, warnings };
+}
+
+// ─── Removal ───────────────────────────────────────────────────────────
+
+export type RemoveOptions = {
+  /** Target ids; `undefined` means "every known target". */
+  targets?: string[];
+  /** Remove from the user-level folders instead of the project folders. */
+  global?: boolean;
+  /** Remove from this directory instead of any agent folder. */
+  customDir?: string;
+  cwd?: string;
+  homeDir?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export type RemovedSkill = {
+  id: string;
+  label: string;
+  directory: string;
+  files: number;
+};
+
+export type SkippedSkill = {
+  id: string;
+  directory: string;
+  reason: string;
+};
+
+export type RemoveResult = {
+  skill: string;
+  scope: SkillScope;
+  removed: RemovedSkill[];
+  skipped: SkippedSkill[];
+};
+
+/**
+ * Removes an installed skill folder.
+ *
+ * The guard matters: the folder name is the skill name, and a user could have
+ * put a different skill of their own in the same place. Only a folder whose
+ * `SKILL.md` declares our own name is deleted; anything else is left alone
+ * and reported.
+ */
+function removeAt(directory: string): { removed: boolean; files: number; reason?: string } {
+  if (!fs.existsSync(directory))
+    return { removed: false, files: 0, reason: 'not installed' };
+
+  const skillFile = path.join(directory, 'SKILL.md');
+  if (!fs.existsSync(skillFile))
+    return { removed: false, files: 0, reason: 'no SKILL.md — left untouched' };
+
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(skillFile, 'utf-8'))?.[1] ?? '';
+  const declared = /^name:\s*(.+)$/m.exec(frontmatter)?.[1].trim();
+  if (declared !== skillName)
+    return { removed: false, files: 0, reason: `belongs to "${declared ?? 'unknown'}" — left untouched` };
+
+  const files = listFiles(directory).length;
+  fs.rmSync(directory, { recursive: true, force: true });
+  return { removed: true, files };
+}
+
+/**
+ * Removes the skill from the selected targets.
+ *
+ * Without an explicit selection every known target is visited, so
+ * `uninstall --skills` undoes a full installation. Targets where the skill is
+ * not installed are reported as skipped instead of failing.
+ */
+export function removeSkill(options: RemoveOptions = {}): RemoveResult {
+  const cwd = options.cwd ?? process.cwd();
+  const homeDir = options.homeDir ?? os.homedir();
+  const env = options.env ?? process.env;
+  const removed: RemovedSkill[] = [];
+  const skipped: SkippedSkill[] = [];
+
+  if (options.customDir) {
+    const base = path.resolve(cwd, options.customDir);
+    const directory = path.join(base, skillName);
+    const outcome = removeAt(directory);
+    if (outcome.removed)
+      removed.push({ id: 'custom', label: path.basename(base), directory, files: outcome.files });
+    else
+      skipped.push({ id: 'custom', directory, reason: outcome.reason! });
+    return { skill: skillName, scope: 'custom', removed, skipped };
+  }
+
+  const scope: SkillScope = options.global ? 'user' : 'project';
+  const targets = options.targets && options.targets.length
+    ? resolveSkillTargets(options.targets, { cwd, homeDir })
+    : skillTargets;
+  const seen = new Set<string>();
+
+  for (const target of targets) {
+    const directory = destinationFor(target, scope === 'user' ? 'user' : 'project', { cwd, homeDir, env });
+    const key = path.resolve(directory).toLowerCase();
+    if (seen.has(key))
+      continue;
+    seen.add(key);
+
+    const outcome = removeAt(directory);
+    if (outcome.removed)
+      removed.push({ id: target.id, label: target.label, directory, files: outcome.files });
+    else
+      skipped.push({ id: target.id, directory, reason: outcome.reason! });
+  }
+
+  return { skill: skillName, scope, removed, skipped };
 }

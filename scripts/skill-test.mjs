@@ -18,7 +18,7 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const { commands } = require('../dist/commands.js');
-const { bundledSkillDir, installSkill, resolveSkillTargets, skillTargets } = require('../dist/skill.js');
+const { bundledSkillDir, installSkill, removeSkill, resolveSkillTargets, skillTargets } = require('../dist/skill.js');
 
 const SKILL_NAME = 'playwright-extension-cli';
 
@@ -154,6 +154,79 @@ const help = runCli(['install', '--help']);
 assert.equal(help.status, 0, help.stderr);
 assert.match(help.stdout, /Targets:/);
 console.log('✓ bad input fails loudly and --help explains the targets');
+
+// ─── removal ──────────────────────────────────────────────────────────
+
+const removeRoot = path.join(temp, 'remove');
+const removeHome = path.join(temp, 'remove-home');
+fs.mkdirSync(removeRoot, { recursive: true });
+fs.mkdirSync(removeHome, { recursive: true });
+
+// A skill that is installed gets removed again.
+const removable = installSkill({ targets: ['agents'], cwd: removeRoot, homeDir: removeHome, env: {} });
+const removableDir = removable.installed[0].directory;
+assert.ok(fs.existsSync(path.join(removableDir, 'SKILL.md')));
+const removed = removeSkill({ targets: ['agents'], cwd: removeRoot, homeDir: removeHome, env: {} });
+assert.equal(removed.removed.length, 1);
+assert.equal(removed.removed[0].directory, removableDir);
+assert.ok(!fs.existsSync(removableDir), 'the skill folder must be gone');
+console.log('✓ an installed skill is removed again');
+
+// A target where the skill was never installed is reported, not an error.
+const notInstalled = removeSkill({ targets: ['claude'], cwd: removeRoot, homeDir: removeHome, env: {} });
+assert.equal(notInstalled.removed.length, 0);
+assert.equal(notInstalled.skipped.length, 1);
+assert.match(notInstalled.skipped[0].reason, /not installed/);
+console.log('✓ a target without the skill is skipped, not an error');
+
+// A folder that holds a different skill is left alone.
+const foreignDir = path.join(removeHome, '.claude', 'skills', SKILL_NAME);
+fs.mkdirSync(foreignDir, { recursive: true });
+fs.writeFileSync(path.join(foreignDir, 'SKILL.md'), '---\nname: someone-elses-skill\n---\n');
+const foreign = removeSkill({ targets: ['claude'], global: true, cwd: removeRoot, homeDir: removeHome, env: {} });
+assert.equal(foreign.removed.length, 0);
+assert.match(foreign.skipped[0].reason, /someone-elses-skill/);
+assert.ok(fs.existsSync(path.join(foreignDir, 'SKILL.md')), 'a foreign skill must survive');
+console.log('✓ a foreign skill in the same folder is left untouched');
+
+// Without a selection every known target is visited.
+installSkill({ targets: ['claude'], global: true, cwd: removeRoot, homeDir: removeHome, env: {} });
+const sweep = removeSkill({ global: true, cwd: removeRoot, homeDir: removeHome, env: {} });
+assert.ok(sweep.removed.length >= 1);
+assert.ok(sweep.removed.some(entry => entry.id === 'claude'));
+assert.ok(sweep.skipped.length >= 1, 'the targets without the skill are reported');
+console.log('✓ without a selection every target is visited');
+
+// ─── the CLI itself ────────────────────────────────────────────────────
+
+const cliRemoved = runCli(['uninstall', '--skills=agents', '--skills-dir', cliTarget]);
+assert.equal(cliRemoved.status, 0, cliRemoved.stderr);
+assert.match(cliRemoved.stdout, /Removed skill "playwright-extension-cli"/);
+assert.ok(!fs.existsSync(path.join(cliTarget, SKILL_NAME)), 'the CLI removed the skill');
+console.log('✓ `pwcli uninstall --skills --skills-dir <path>` works end to end');
+
+const bareUninstall = runCli(['uninstall']);
+assert.notEqual(bareUninstall.status, 0);
+assert.match(bareUninstall.stderr, /pwcli uninstall --skills/);
+
+const unknownUninstall = runCli(['uninstall', '--skills=nope']);
+assert.notEqual(unknownUninstall.status, 0);
+assert.match(unknownUninstall.stderr, /Unknown skill target/);
+
+const uninstallHelp = runCli(['uninstall', '--help']);
+assert.equal(uninstallHelp.status, 0, uninstallHelp.stderr);
+assert.match(uninstallHelp.stdout, /Targets:/);
+console.log('✓ `pwcli uninstall` fails loudly without --skills and explains the targets');
+
+// PowerShell hands a comma separated list over as one space joined argument,
+// so the target list has to be split on whitespace as well.
+const spaced = runCli(['install', '--skills=claude,agents', '--skills-dir', path.join(temp, 'spaced')]);
+assert.equal(spaced.status, 0, spaced.stderr);
+assert.match(spaced.stdout, /Installed skill "playwright-extension-cli"/);
+const spacedTargets = runCli(['uninstall', '--skills=claude,agents', '--skills-dir', path.join(temp, 'spaced')]);
+assert.equal(spacedTargets.status, 0, spacedTargets.stderr);
+assert.match(spacedTargets.stdout, /Removed skill "playwright-extension-cli"/);
+console.log('✓ a comma separated target list survives a shell that joins it with spaces');
 
 cleanup();
 console.log('\nAll skill tests passed.');

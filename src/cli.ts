@@ -21,7 +21,7 @@ import { daemonStatus, sendRequest } from './client';
 import { commands, findCommand, parseArgv, UsageError } from './commands';
 import { daemonLogPath, DEFAULT_CAPABILITIES, runDaemon } from './daemon';
 import { log, setLogLevel } from './log';
-import { installSkill, isSkillTargetName, skillTargets } from './skill';
+import { installSkill, removeSkill, skillTargets } from './skill';
 import {
   defaultUserDataDirForChannel,
   findBrowserExecutable,
@@ -169,6 +169,7 @@ function usage(): string {
     '',
     'Install commands:',
     '  install --skills        Install the agent skill for coding agents',
+    '  uninstall --skills      Remove the agent skill again',
     '',
     'Commands:',
   ];
@@ -232,12 +233,17 @@ async function listTools(): Promise<void> {
     process.stdout.write(`${tool.schema.name.padEnd(34)} ${tool.capability}\n`);
 }
 
-function installUsage(): string {
+function skillUsage(command: 'install' | 'uninstall'): string {
+  const installing = command === 'install';
   const lines = [
-    'pwcli install --skills[=<targets>] [--global] [--skills-dir <path>]',
+    `pwcli ${command} --skills[=<targets>] [--global] [--skills-dir <path>]`,
     '',
-    'Installs the bundled agent skill (SKILL.md + references/) into the skills',
-    'folders of the coding agents that speak the Agent Skills format.',
+    installing
+      ? 'Installs the bundled agent skill (SKILL.md + references/) into the skills'
+      : 'Removes the agent skill from the skills folders of the coding agents.',
+    installing
+      ? 'folders of the coding agents that speak the Agent Skills format.'
+      : 'Only a folder whose SKILL.md declares our own skill is deleted.',
     '',
     'Targets:',
   ];
@@ -247,15 +253,27 @@ function installUsage(): string {
     '  all         every target above',
     '',
     'Options:',
-    '  --skills[=<targets>]   Install the skill. <targets> is a comma-separated list',
-    '                         of target ids (default: detect the agents installed here)',
-    '  --global, -g           Install into the user-level folders instead of the project',
-    '  --skills-dir <path>    Install into a custom directory (overrides the targets)',
+    `  --skills[=<targets>]   ${installing ? 'Install' : 'Remove'} the skill. <targets> is a comma-separated`,
+    '                         list of target ids' + (installing ? ' (default: detect the agents installed here)' : ' (default: every target)'),
+    `  --global, -g           ${installing ? 'Install into' : 'Remove from'} the user-level folders instead of the project`,
+    `  --skills-dir <path>    ${installing ? 'Install into' : 'Remove from'} a custom directory (overrides the targets)`,
   );
   return lines.join('\n');
 }
 
-async function installCommand(argv: string[], session: SessionFlags): Promise<void> {
+type SkillCommandOptions = {
+  requested: boolean;
+  targets?: string[];
+  globalScope: boolean;
+  customDir?: string;
+  /** The usage was printed and the command is done. */
+  help: boolean;
+};
+
+/**
+ * Parses the flags shared by `install --skills` and `uninstall --skills`.
+ */
+function parseSkillFlags(argv: string[], command: 'install' | 'uninstall'): SkillCommandOptions {
   let requested = false;
   let targets: string[] | undefined;
   let globalScope = false;
@@ -265,8 +283,8 @@ async function installCommand(argv: string[], session: SessionFlags): Promise<vo
     const arg = argv[i];
 
     if (arg === '-h' || arg === '--help') {
-      process.stdout.write(installUsage() + '\n');
-      return;
+      process.stdout.write(skillUsage(command) + '\n');
+      return { requested: false, globalScope: false, help: true };
     }
 
     if (arg === '--global' || arg === '-g') {
@@ -276,22 +294,28 @@ async function installCommand(argv: string[], session: SessionFlags): Promise<vo
 
     if (arg === '--skills' || arg.startsWith('--skills=')) {
       requested = true;
-      let value: string | undefined;
+      const values: string[] = [];
       if (arg.startsWith('--skills=')) {
-        value = arg.slice('--skills='.length);
+        values.push(arg.slice('--skills='.length));
       } else {
         const next = argv[i + 1];
         if (next !== undefined && !next.startsWith('-')) {
-          if (!isSkillTargetName(next))
-            throw new UsageError(`Unknown skill target "${next}". Run \`pwcli install --help\` for the list.`);
-          value = next;
+          values.push(next);
           i++;
         }
       }
-      for (const part of (value ?? '').split(',')) {
-        const name = part.trim();
-        if (name)
-          targets = [...(targets ?? []), name];
+      // Further non-flag words belong to the target list as well: shells hand
+      // over `--skills=a,b` either as one argument or as several, and
+      // PowerShell joins a comma separated list with spaces.
+      while (i + 1 < argv.length && !argv[i + 1].startsWith('-'))
+        values.push(argv[++i]);
+
+      for (const value of values) {
+        for (const part of value.split(/[\s,]+/)) {
+          const name = part.trim();
+          if (name)
+            targets = [...(targets ?? []), name];
+        }
       }
       continue;
     }
@@ -309,11 +333,20 @@ async function installCommand(argv: string[], session: SessionFlags): Promise<vo
       continue;
     }
 
-    throw new UsageError(`Unknown option for \`install\`: ${arg}`);
+    throw new UsageError(`Unknown option for \`${command}\`: ${arg}`);
   }
 
+  return { requested, targets, globalScope, customDir, help: false };
+}
+
+async function installCommand(argv: string[], session: SessionFlags): Promise<void> {
+  const { requested, targets, globalScope, customDir, help } = parseSkillFlags(argv, 'install');
+
+  if (help)
+    return;
+
   if (!requested) {
-    process.stderr.write(installUsage() + '\n');
+    process.stderr.write(skillUsage('install') + '\n');
     process.exitCode = 1;
     return;
   }
@@ -331,6 +364,34 @@ async function installCommand(argv: string[], session: SessionFlags): Promise<vo
   for (const warning of result.warnings)
     lines.push(`  warning: ${warning}`);
   lines.push('Restart the coding agent so it picks the skill up.');
+  lines.push('Tip: "agents" covers Codex, Cursor, Gemini, Copilot and Kimi; Claude Code and CodeBuddy need their own folder.');
+  process.stdout.write(lines.join('\n') + '\n');
+}
+
+async function uninstallCommand(argv: string[], session: SessionFlags): Promise<void> {
+  const { requested, targets, globalScope, customDir, help } = parseSkillFlags(argv, 'uninstall');
+
+  if (help)
+    return;
+
+  if (!requested) {
+    process.stderr.write(skillUsage('uninstall') + '\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const result = removeSkill({ targets, global: globalScope, customDir, cwd: process.cwd() });
+
+  if (session.json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return;
+  }
+
+  const lines = [`Removed skill "${result.skill}" (${result.scope}):`];
+  for (const entry of result.removed)
+    lines.push(`  ${entry.id.padEnd(12)} ${entry.directory}  (${entry.files} files)`);
+  for (const entry of result.skipped)
+    lines.push(`  ${entry.id.padEnd(12)} ${entry.directory}  (skipped: ${entry.reason})`);
   process.stdout.write(lines.join('\n') + '\n');
 }
 
@@ -363,6 +424,10 @@ async function main(): Promise<void> {
     }
     case 'install': {
       await installCommand(rest.slice(1), session);
+      return;
+    }
+    case 'uninstall': {
+      await uninstallCommand(rest.slice(1), session);
       return;
     }
     case 'tools': {
