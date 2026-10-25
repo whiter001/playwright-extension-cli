@@ -1,10 +1,10 @@
 ---
-name: playwright-mcp-cli
+name: playwright-extension-cli
 description: 用命令行驱动你日常用的 Chrome 浏览器（复用 Playwright Chrome Extension 的登录态与会话），完成点击、输入、表单验证、截图取证、接口排查等网页操作。当任务需要操作网页、复现页面问题、验证 UI 改动或采集页面证据时使用。
 allowed-tools: Bash(pwcli:*), Bash(playwright-extension-cli:*)
 ---
 
-# playwright-mcp-cli
+# playwright-extension-cli
 
 用**命令行**驱动真实的 Chrome：连接你日常使用的那个浏览器和它的登录态，用 `pwcli <命令>` 完成交互，
 每一步都能拿到可复核的证据（快照 / 截图 / 控制台 / 网络）。

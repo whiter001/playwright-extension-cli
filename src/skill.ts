@@ -15,7 +15,7 @@ import path from 'path';
 
 import { UsageError } from './commands';
 
-export const skillName = 'playwright-mcp-cli';
+export const skillName = 'playwright-extension-cli';
 
 export type SkillScope = 'project' | 'user' | 'custom';
 

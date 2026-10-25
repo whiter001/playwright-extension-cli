@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 const { commands } = require('../dist/commands.js');
 const { bundledSkillDir, installSkill, resolveSkillTargets, skillTargets } = require('../dist/skill.js');
 
-const SKILL_NAME = 'playwright-mcp-cli';
+const SKILL_NAME = 'playwright-extension-cli';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'pwcli-skill-'));
 const project = path.join(temp, 'project');
@@ -138,7 +138,7 @@ function runCli(args) {
 const cliTarget = path.join(temp, 'cli-target');
 const installed = runCli(['install', '--skills=agents', '--skills-dir', cliTarget]);
 assert.equal(installed.status, 0, installed.stderr);
-assert.match(installed.stdout, /Installed skill "playwright-mcp-cli"/);
+assert.match(installed.stdout, /Installed skill "playwright-extension-cli"/);
 assert.ok(fs.existsSync(path.join(cliTarget, SKILL_NAME, 'SKILL.md')));
 console.log('✓ `pwcli install --skills --skills-dir <path>` works end to end');
 
