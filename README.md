@@ -153,6 +153,8 @@ daemon ── relay (WebSocket, 127.0.0.1)
 
 **为什么需要 daemon**：扩展的 WebSocket 断了连接就没了 —— CLI 单次执行退出的话，
 每次命令都要重新授权。所以连接常驻 daemon，命令通过 unix socket 走。
+Windows 没有 unix domain socket，daemon 改用命名管道 `\\.\pipe\playwright-mcp-cli-daemon`，
+其余平台用 `<tmp>/playwright-mcp-cli/daemon.sock`。
 
 ### 扩展 ID 与认证 token
 
@@ -168,7 +170,8 @@ daemon ── relay (WebSocket, 127.0.0.1)
 **从哪手动拿 token**：点扩展图标打开状态页，上面直接显示 `PLAYWRIGHT_MCP_EXTENSION_TOKEN=...`。
 
 > 注意：token 是通过 connect 页的 URL 参数传的，会进 Chrome 的历史记录。不想留痕就别用 token，
-> 走手动授权即可（`--token ""` 可强制忽略环境变量）。
+> 走手动授权即可（`--token ""` 可强制忽略环境变量）。`pwcli status` 打印的页面 URL 会把
+> `token=` 脱敏成 `<redacted>`，可以直接贴给别人看。
 
 协议细节（命令 / 事件 / 消息帧）见 `src/relay/protocol.ts`。
 

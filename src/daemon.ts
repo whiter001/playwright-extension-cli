@@ -28,7 +28,21 @@ export function daemonDir(): string {
   return path.join(os.tmpdir(), 'playwright-mcp-cli');
 }
 
+/**
+ * True when the path lives in the Windows pipe namespace.
+ *
+ * Windows has no unix domain sockets: Node maps a path to a named pipe, and a
+ * path with a drive letter and backslashes is not a valid pipe name, so
+ * `bind()` fails with EACCES. The daemon therefore uses an explicit pipe name
+ * there and a real socket file everywhere else.
+ */
+function isWindowsPipe(target: string): boolean {
+  return process.platform === 'win32' && target.startsWith('\\\\.\\pipe\\');
+}
+
 export function socketPath(): string {
+  if (process.platform === 'win32')
+    return '\\\\.\\pipe\\playwright-mcp-cli-daemon';
   return path.join(daemonDir(), 'daemon.sock');
 }
 
@@ -38,6 +52,17 @@ export function statePath(): string {
 
 export function daemonLogPath(): string {
   return path.join(daemonDir(), 'daemon.log');
+}
+
+/**
+ * Masks the auth token in a URL.
+ *
+ * The extension's connect page carries the token in its query string, and the
+ * status output is the kind of thing people paste into bug reports — so the
+ * token never leaves the daemon in clear text.
+ */
+export function redactToken(url: string): string {
+  return url.replace(/([?&]token=)[^&]*/i, '$1<redacted>');
 }
 
 export type DaemonState = {
@@ -97,13 +122,19 @@ function isSocketLive(socketPath: string): Promise<boolean> {
 
 export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   const socket = options.socketPath ?? socketPath();
-  await fs.promises.mkdir(path.dirname(socket), { recursive: true });
+  const isPipe = isWindowsPipe(socket);
+  // The state and log files live in the temp directory; the socket itself may
+  // live in the pipe namespace, which is not a directory we can create.
+  await fs.promises.mkdir(daemonDir(), { recursive: true });
+  if (!isPipe)
+    await fs.promises.mkdir(path.dirname(socket), { recursive: true });
 
   if (await isSocketLive(socket))
     throw new Error(`Another session daemon is already listening on ${socket}. Run \`pwcli disconnect\` first.`);
 
   // A stale socket file from a crashed daemon would make bind() fail.
-  await fs.promises.rm(socket, { force: true });
+  if (!isPipe)
+    await fs.promises.rm(socket, { force: true });
 
   let connected = false;
   let session: Awaited<ReturnType<typeof connectToExtension>> | undefined;
@@ -173,7 +204,9 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
 
   const shutdown = async () => {
     server.close();
-    await fs.promises.rm(socket, { force: true });
+    // A named pipe disappears with the process that owns it.
+    if (!isPipe)
+      await fs.promises.rm(socket, { force: true });
     await fs.promises.rm(statePath(), { force: true });
     // The session may still be waiting for the user to approve the extension
     // in Chrome. Blocking teardown on it would leave the daemon alive forever
@@ -209,7 +242,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
         let pages: string[] = [];
         if (session) {
           try {
-            pages = session.context.pages().map(page => page.url());
+            pages = session.context.pages().map(page => redactToken(page.url()));
           } catch {
             connected = false;
           }
