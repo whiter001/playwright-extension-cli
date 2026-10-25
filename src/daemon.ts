@@ -25,7 +25,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 export const DEFAULT_CAPABILITIES = ['core', 'pdf', 'storage', 'vision', 'network'];
 
 export function daemonDir(): string {
-  return path.join(os.tmpdir(), 'playwright-mcp-cli');
+  return path.join(os.tmpdir(), 'playwright-extension-cli');
 }
 
 export function socketPath(): string {
@@ -160,12 +160,12 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     log.info('tool layer ready');
     return client;
   });
-
+ 
   const state: DaemonState = {
     pid: process.pid,
     socketPath: socket,
     startedAt: new Date().toISOString(),
-    clientName: options.clientName ?? 'playwright-mcp-cli',
+    clientName: options.clientName ?? 'playwright-extension-cli',
   };
   await fs.promises.writeFile(statePath(), JSON.stringify(state, null, 2));
 

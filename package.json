@@ -1,19 +1,30 @@
 {
-  "name": "playwright-mcp-cli",
-  "version": "0.1.0",
-  "private": true,
-  "description": "CLI that bridges an MCP client to the Playwright Chrome Extension (protocol v2)",
+  "name": "playwright-extension-cli",
+  "version": "0.0.1",
+  "description": "Drive your browser from the command line through the Playwright Chrome Extension",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=20"
   },
   "bin": {
     "pwcli": "./dist/cli.js",
-    "playwright-mcp-cli": "./dist/cli.js"
+    "playwright-extension-cli": "./dist/cli.js"
   },
   "main": "./dist/cli.js",
   "files": [
     "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "keywords": [
+    "playwright",
+    "chrome-extension",
+    "cli",
+    "browser-automation",
+    "cdp",
+    "mcp"
   ],
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.json",
@@ -29,7 +40,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "playwright-core": "1.64.0-alpha-1790635538000",
+    "playwright-core": "1.64.1",
     "ws": "^8.18.3"
   },
   "devDependencies": {

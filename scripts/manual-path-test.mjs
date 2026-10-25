@@ -69,7 +69,7 @@ console.log(`relay: ${relay.extensionEndpoint()}`);
 
 const connectUrl = buildConnectUrl({
   relayUrl: relay.extensionEndpoint(),
-  clientName: 'pw-mcp-cli-test',
+  clientName: 'pw-extension-cli-test',
   protocolVersion: 2,
 });
 await fetch(`http://127.0.0.1:${CHROME_DEBUG_PORT}/json/new?${encodeURIComponent(connectUrl)}`, { method: 'PUT' });

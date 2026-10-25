@@ -43,7 +43,7 @@ function emit(level: LogLevel, args: unknown[]): void {
   if (levelOrder[level] > levelOrder[currentLevel])
     return;
   const message = args.map(arg => typeof arg === 'string' ? arg : inspect(arg)).join(' ');
-  process.stderr.write(`[pw-mcp-cli:${level}] ${message}\n`);
+  process.stderr.write(`[pwcli:${level}] ${message}\n`);
 }
 
 function inspect(value: unknown): string {

@@ -21,7 +21,7 @@ const transport = new StdioClientTransport({
   env: { ...process.env },
 });
 
-const client = new Client({ name: 'playwright-mcp-cli-e2e', version: '1.0.0' }, { capabilities: {} });
+const client = new Client({ name: 'playwright-extension-cli-e2e', version: '1.0.0' }, { capabilities: {} });
 
 console.log('[e2e] connecting...');
 await client.connect(transport);
