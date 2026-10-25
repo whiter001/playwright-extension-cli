@@ -284,7 +284,9 @@ async function main(): Promise<void> {
         `running:   yes`,
         `pid:       ${status.pid ?? '-'}`,
         `started:   ${status.startedAt ?? '-'}`,
-        `extension: ${status.connected ? 'connected' : 'waiting for approval in Chrome'}`,
+        status.sessionError
+          ? `extension: FAILED — ${status.sessionError}`
+          : `extension: ${status.connected ? 'connected' : 'waiting for approval in Chrome'}`,
         ...(status.pages?.length ? [`pages:     ${status.pages.join(', ')}`] : []),
         `log:       ${daemonLogPath()}`,
       ].join('\n') + '\n');

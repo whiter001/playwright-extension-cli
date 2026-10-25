@@ -106,6 +106,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
   await fs.promises.rm(socket, { force: true });
 
   let connected = false;
+  let sessionError: string | undefined;
   let session: Awaited<ReturnType<typeof connectToExtension>> | undefined;
   // Assigned right after the socket is bound.
   let sessionPromise: Promise<Awaited<ReturnType<typeof connectToExtension>>> | undefined;
@@ -138,10 +139,12 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
 
   sessionPromise = connectToExtension(options);
   sessionPromise.catch(error => {
-    if (isRelayStopped(error))
+    if (isRelayStopped(error)) {
       log.debug('Extension connection closed:', (error as Error).message);
-    else
-      log.error('Extension connection failed:', error);
+      return;
+    }
+    sessionError = error instanceof Error ? error.message : String(error);
+    log.error('Extension connection failed:', error);
   });
 
   sessionPromise.then(value => {
@@ -160,7 +163,15 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     log.info('tool layer ready');
     return client;
   });
- 
+  // The derivation above rejects whenever the session fails (extension not
+  // installed, wrong profile, handshake timeout). Without a handler here that
+  // rejection is unhandled and Node kills the daemon, so clients only see a
+  // timeout instead of the real error. Individual requests still observe the
+  // rejection through `await clientPromise` below.
+  void clientPromise.catch(error => {
+    log.debug('Tool layer unavailable:', error instanceof Error ? error.message : error);
+  });
+
   const state: DaemonState = {
     pid: process.pid,
     socketPath: socket,
@@ -214,7 +225,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
             connected = false;
           }
         }
-        respond({ id: request.id, ok: true, result: { running: true, ...state, connected, pages } });
+        respond({ id: request.id, ok: true, result: { running: true, ...state, connected, pages, sessionError } });
         return;
       }
       if (request.type === 'disconnect') {
