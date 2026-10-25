@@ -1,4 +1,4 @@
-# playwright-mcp-cli
+# playwright-extension-cli
 
 用**命令行**驱动你日常用的浏览器 —— 通过已安装的 **Playwright Chrome Extension**，
 复用扩展的登录态 / 会话 / 标签页。
@@ -14,15 +14,21 @@ pwcli type e4 "hello"
 pwcli screenshot shot.png
 ```
 
+## 安装
+
+```bash
+npm install -g playwright-extension-cli   # 提供 pwcli 和 playwright-extension-cli 两个命令
+pwcli doctor                              # 自检：浏览器 / profile / 扩展
+```
+
+从源码跑：`npm install && npm run build`，然后 `node dist/cli.js <命令>`。
+
 ## 快速开始
 
 ```bash
-npm install
-npm run build
-
-node dist/cli.js doctor      # 自检：浏览器 / profile / 扩展
-node dist/cli.js connect     # 打开扩展连接页，在 Chrome 里选一个标签页
-node dist/cli.js navigate https://example.com
+pwcli connect     # 打开扩展连接页，在 Chrome 里选一个标签页
+pwcli navigate https://example.com
+pwcli snapshot
 ```
 
 `connect` 之后会话由一个**常驻 daemon** 持有，所以后续每条命令都是毫秒级响应，

@@ -196,7 +196,7 @@ export async function runDaemon(options: DaemonOptions = {}): Promise<void> {
     pid: process.pid,
     socketPath: socket,
     startedAt: new Date().toISOString(),
-    clientName: options.clientName ?? 'playwright-mcp-cli',
+    clientName: options.clientName ?? 'playwright-extension-cli',
   };
   await fs.promises.writeFile(statePath(), JSON.stringify(state, null, 2));
 

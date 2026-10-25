@@ -164,7 +164,7 @@ function openConnectPageViaSystem(url: string, executablePath: string): void {
  */
 export async function connectToExtension(options: ExtensionServerOptions = {}): Promise<ExtensionSession> {
   const channel = options.browserChannel ?? 'chrome';
-  const clientName = options.clientName ?? 'playwright-mcp-cli';
+  const clientName = options.clientName ?? 'playwright-extension-cli';
 
   // The *user supplied* executable path disables profile detection (the local
   // profile layout may not apply), but the discovered one is what we spawn.
@@ -258,7 +258,7 @@ export async function createToolClient(
   }, async () => context);
   await server.connect(serverTransport);
 
-  const client = new Client({ name: options.clientName ?? 'playwright-mcp-cli', version: '1.0.0' }, { capabilities: {} });
+  const client = new Client({ name: options.clientName ?? 'playwright-extension-cli', version: '1.0.0' }, { capabilities: {} });
   await client.connect(clientTransport);
   return client;
 }

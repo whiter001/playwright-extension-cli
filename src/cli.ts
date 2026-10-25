@@ -117,7 +117,7 @@ function sessionOptions(session: SessionFlags): ExtensionServerOptions {
     // then the token stored in the browser profile, then the environment.
     // `--token ""` explicitly disables it.
     token: session.token,
-    clientName: session.clientName ?? 'playwright-mcp-cli',
+    clientName: session.clientName ?? 'playwright-extension-cli',
     outputDir: session.outputDir,
     connectTimeoutMs: session.connectTimeoutMs,
     capabilities: DEFAULT_CAPABILITIES,
@@ -154,7 +154,7 @@ function printResult(result: any, json: boolean): void {
 
 function usage(): string {
   const lines = [
-    'playwright-mcp-cli — drive your browser through the Playwright Chrome Extension',
+    'playwright-extension-cli — drive your browser through the Playwright Chrome Extension',
     '',
     'Usage:',
     '  pwcli <command> [args] [options]',

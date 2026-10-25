@@ -1,15 +1,31 @@
 {
-  "name": "playwright-mcp-cli",
-  "version": "0.1.0",
-  "private": true,
+  "name": "playwright-extension-cli",
+  "version": "0.0.2",
   "description": "CLI that bridges an MCP client to the Playwright Chrome Extension (protocol v2)",
   "license": "Apache-2.0",
+  "author": "baiyunfeng <baiyunfeng@bailian.ai>",
+  "homepage": "https://github.com/whiter001/playwright-extension-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whiter001/playwright-extension-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/whiter001/playwright-extension-cli/issues"
+  },
+  "keywords": [
+    "playwright",
+    "mcp",
+    "chrome-extension",
+    "cli",
+    "browser-automation",
+    "agent"
+  ],
   "engines": {
     "node": ">=20"
   },
   "bin": {
     "pwcli": "./dist/cli.js",
-    "playwright-mcp-cli": "./dist/cli.js"
+    "playwright-extension-cli": "./dist/cli.js"
   },
   "main": "./dist/cli.js",
   "files": [

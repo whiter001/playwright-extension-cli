@@ -1,7 +1,7 @@
 ---
 name: playwright-mcp-cli
 description: 用命令行驱动你日常用的 Chrome 浏览器（复用 Playwright Chrome Extension 的登录态与会话），完成点击、输入、表单验证、截图取证、接口排查等网页操作。当任务需要操作网页、复现页面问题、验证 UI 改动或采集页面证据时使用。
-allowed-tools: Bash(pwcli:*), Bash(playwright-mcp-cli:*)
+allowed-tools: Bash(pwcli:*), Bash(playwright-extension-cli:*)
 ---
 
 # playwright-mcp-cli
@@ -25,7 +25,7 @@ allowed-tools: Bash(pwcli:*), Bash(playwright-mcp-cli:*)
 ## 前置条件
 
 1. Chrome 里装了 **Playwright MCP Chrome Extension**（Chrome 网上应用商店搜 "Playwright MCP"）
-2. Node.js >= 20，装了本 CLI：`npm i -g playwright-mcp-cli`
+2. Node.js >= 20，装了本 CLI：`npm i -g playwright-extension-cli`
 3. 自检一遍：`pwcli doctor` —— 它会检查浏览器可执行文件、Chrome profile 和扩展装没装
 
 `doctor` 报 `extension: NOT installed` 就先去装扩展，别往下走。
