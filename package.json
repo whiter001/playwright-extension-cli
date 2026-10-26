@@ -1,6 +1,6 @@
 {
   "name": "playwright-extension-cli",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "CLI that bridges an MCP client to the Playwright Chrome Extension (protocol v2)",
   "license": "Apache-2.0",
   "author": "baiyunfeng <baiyunfeng@bailian.ai>",
