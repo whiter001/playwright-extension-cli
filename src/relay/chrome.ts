@@ -356,11 +356,11 @@ export async function readExtensionToken(profileDir: string): Promise<string | u
       return isLog(b) - isLog(a) || number(b) - number(a);
     });
 
-  // The id is stored as one blob, but LevelDB may split it across blocks.
-  const idPattern = new RegExp(
-    'mmlmfjh[\\s\\S]{0,16}ocbjadbfplnigmagldckm',
-    'g',
-  );
+  // The id is stored as one blob, but LevelDB encodes part of it, so the
+  // readable fragments are separated by binary bytes. The observed layout
+  // keeps "mmlmfjh", "ocbjadbfpln" and "gldckm" as plain text with a short
+  // gap in front of each of the two latter ones.
+  const idPattern = /mmlmfjh[\s\S]{0,16}ocbjadbfpln[\s\S]{0,16}gldckm/g;
   const tokenPattern = /[A-Za-z0-9_-]{43}/g;
 
   for (const file of files) {
@@ -377,11 +377,15 @@ export async function readExtensionToken(profileDir: string): Promise<string | u
     const text = data.toString('latin1');
     const candidates: { token: string; offset: number }[] = [];
     for (const idMatch of text.matchAll(idPattern)) {
-      const from = Math.max(0, idMatch.index! - 512);
-      const window = text.slice(from, idMatch.index! + 512);
-      for (const tokenMatch of window.matchAll(tokenPattern)) {
-        candidates.push({ token: tokenMatch[0], offset: from + tokenMatch.index! });
-      }
+      const idEnd = idMatch.index! + idMatch[0].length;
+      // The value of a localStorage record follows its origin id, so the first
+      // token after the id is the one that belongs to it. An origin can have
+      // several records (auth-token, activeTab, ...), and only some of them
+      // carry a token — hence the bounded distance and the "first one wins".
+      const window = text.slice(idEnd, idEnd + 256);
+      const value = window.match(tokenPattern);
+      if (value)
+        candidates.push({ token: value[0], offset: idMatch.index! });
     }
     if (candidates.length) {
       // Later offsets hold the newer value.

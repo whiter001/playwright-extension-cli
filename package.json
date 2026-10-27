@@ -1,8 +1,26 @@
 {
   "name": "playwright-extension-cli",
-  "version": "0.0.1",
-  "description": "Drive your browser from the command line through the Playwright Chrome Extension",
+  "version": "0.0.5",
+  "description": "CLI that bridges an MCP client to the Playwright Chrome Extension (protocol v2)",
   "license": "Apache-2.0",
+  "author": "baiyunfeng <baiyunfeng@bailian.ai>",
+  "homepage": "https://github.com/whiter001/playwright-extension-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whiter001/playwright-extension-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/whiter001/playwright-extension-cli/issues"
+  },
+  "keywords": [
+    "playwright",
+    "mcp",
+    "chrome-extension",
+    "cli",
+    "browser-automation",
+    "agent",
+    "cdp"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -12,27 +30,20 @@
   },
   "main": "./dist/cli.js",
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
-  "keywords": [
-    "playwright",
-    "chrome-extension",
-    "cli",
-    "browser-automation",
-    "cdp",
-    "mcp"
-  ],
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build",
-    "test": "npm run build && node scripts/args-test.mjs && node scripts/relay-test.mjs",
+    "test": "npm run build && node scripts/args-test.mjs && node scripts/relay-test.mjs && node scripts/skill-test.mjs && node scripts/token-test.mjs && node scripts/daemon-test.mjs",
     "test:manual": "npm run build && node scripts/manual-path-test.mjs",
     "test:cli": "npm run build && node scripts/cli-test.mjs",
     "test:chrome": "scripts/setup-test-chrome.sh",
